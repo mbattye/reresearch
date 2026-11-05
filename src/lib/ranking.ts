@@ -44,7 +44,50 @@ export function feedRank(opts: { score: number; publishedAt: Date; read: boolean
 }
 
 function containsTerm(haystack: string, term: string): boolean {
-  // Word-boundary match so "lhc" doesn't match inside other words; short acronyms need this most.
+  // Whole-word match (plurals allowed), so "higgs" doesn't match "higgsino" and "lhc" stays an acronym.
   const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(^|[^a-z0-9])${escaped}`, "i").test(haystack);
+  return new RegExp(`(^|[^a-z0-9])${escaped}(s|es)?([^a-z0-9]|$)`, "i").test(haystack);
+}
+
+/**
+ * Pick `limit` papers from a best-first list without filling every slot with near-duplicates
+ * (a burst of papers on one result) or with discovered papers: trending and recommended papers
+ * share at most half the slots, so new submissions in the reader's categories always get a look in.
+ */
+export function diversify<T extends { title: string; score: number; foundVia: string; requested: boolean }>(
+  ranked: T[],
+  limit: number,
+): T[] {
+  const discoveredCap = Math.max(1, Math.ceil(limit / 2));
+  const isDiscovered = (p: T) => p.foundVia === "inspire" || p.foundVia === "semantic-scholar";
+  const picked: T[] = [];
+  const pool = [...ranked];
+  while (picked.length < limit && pool.length) {
+    let best = -1;
+    let bestScore = -Infinity;
+    pool.forEach((p, i) => {
+      if (!p.requested && isDiscovered(p) && picked.filter(isDiscovered).length >= discoveredCap) return;
+      const overlap = Math.max(0, ...picked.map((q) => titleOverlap(p.title, q.title)));
+      const adjusted = (p.requested ? 100 : 0) + p.score - 6 * overlap;
+      if (adjusted > bestScore) {
+        bestScore = adjusted;
+        best = i;
+      }
+    });
+    if (best < 0) break;
+    picked.push(pool.splice(best, 1)[0]);
+  }
+  return picked;
+}
+
+const STOPWORDS = new Set(["the", "a", "an", "of", "and", "in", "on", "for", "to", "with", "from", "at", "by", "via", "using", "as"]);
+
+function titleOverlap(a: string, b: string): number {
+  const words = (s: string) => new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !STOPWORDS.has(w)));
+  const A = words(a);
+  const B = words(b);
+  if (!A.size || !B.size) return 0;
+  let shared = 0;
+  for (const w of A) if (B.has(w)) shared++;
+  return shared / Math.min(A.size, B.size);
 }

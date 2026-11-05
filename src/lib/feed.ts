@@ -36,7 +36,13 @@ export async function getFeed(tab: Exclude<FeedTab, "queue">): Promise<FeedItem[
     const rank = (r: FeedItem) =>
       // Papers the reader asked for float to the top until read.
       (r.paper.requested && !r.interaction?.readAt ? 10 : 0) +
-      feedRank({ score: r.paper.score, publishedAt: r.paper.publishedAt, read: !!r.interaction?.readAt, now });
+      feedRank({
+        score: r.paper.score,
+        // "New to you": a trending or recommended paper counts as fresh when it was found, not when it was posted.
+        publishedAt: new Date(Math.max(r.paper.publishedAt.getTime(), r.paper.createdAt.getTime())),
+        read: !!r.interaction?.readAt,
+        now,
+      });
     rows.sort((a, b) => rank(b) - rank(a));
   } else if (tab === "latest") {
     rows.sort((a, b) => b.paper.publishedAt.getTime() - a.paper.publishedAt.getTime());

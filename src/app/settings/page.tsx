@@ -44,7 +44,10 @@ async function Settings() {
     <main className="divide-y divide-line">
       <section className="px-4 py-4">
         <h2 className={sectionTitle}>Add a paper</h2>
-        <p className={hint}>Paste arXiv links or ids (one or more). They&apos;re summarised straight away and go to the top of For you.</p>
+        <p className={hint}>
+          Paste arXiv links or ids, or DOIs (one or more). Journal papers are read from their free legal copy when one
+          exists, otherwise from the abstract.
+        </p>
         <AddPaperForm />
       </section>
 
@@ -76,6 +79,42 @@ async function Settings() {
               className="mt-1 w-full rounded-lg border border-line bg-bg px-3 py-2 font-mono text-[14px] text-fg"
             />
           </label>
+        </section>
+
+        <section className="px-4 py-4">
+          <h2 className={sectionTitle}>Other sources</h2>
+          <p className={hint}>Checked on every run alongside your arXiv categories. Only the best matches get written up.</p>
+          <div className="mt-3 grid gap-2">
+            <label className="flex items-start gap-3 px-1 text-[14px]">
+              <input
+                type="checkbox"
+                name="inspireTrending"
+                defaultChecked={prefs.sources.inspireTrending}
+                className="mt-0.5 size-4 accent-[var(--accent)]"
+              />
+              <span>
+                Trending in particle physics
+                <span className="block text-[12.5px] text-muted">
+                  The most-cited papers of the last six weeks on INSPIRE-HEP: what the field is arguing about.
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-3 px-1 text-[14px]">
+              <input
+                type="checkbox"
+                name="recommendations"
+                defaultChecked={prefs.sources.recommendations}
+                className="mt-0.5 size-4 accent-[var(--accent)]"
+              />
+              <span>
+                Recommended from your likes
+                <span className="block text-[12.5px] text-muted">
+                  Semantic Scholar suggests papers like the ones you like and save, and unlike the ones you hide. Papers
+                  take a few days to be indexed.
+                </span>
+              </span>
+            </label>
+          </div>
         </section>
 
         <section className="px-4 py-4">

@@ -93,6 +93,10 @@ export async function savePreferences(formData: FormData) {
       summariesPerRun,
       summaryModel: SUMMARY_MODELS.some((m) => m.id === model) ? model : null,
       summaryInput: input,
+      sources: {
+        inspireTrending: formData.get("inspireTrending") === "on",
+        recommendations: formData.get("recommendations") === "on",
+      },
       updatedAt: new Date(),
     })
     .where(eq(schema.preferences.id, 1));

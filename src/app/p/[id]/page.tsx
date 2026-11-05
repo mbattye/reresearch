@@ -55,7 +55,7 @@ async function Thread({ params }: Pick<PageProps<"/p/[id]">, "params">) {
             <div className="min-w-0 text-[14px] leading-5">
               <div className="truncate font-semibold">{authorLine(paper.authors)}</div>
               <div className="truncate text-muted">
-                {CATEGORY_LABELS[paper.primaryCategory ?? ""] ?? categoryShort(paper.primaryCategory)} · {date}
+                {fieldLabel(paper)} · {date}
               </div>
             </div>
           </div>
@@ -144,6 +144,11 @@ const INPUT_LABELS: Record<string, string> = {
   abstract: "abstract only",
 };
 
+function fieldLabel(paper: Paper) {
+  if (!paper.primaryCategory) return paper.venue ?? "Journal article";
+  return CATEGORY_LABELS[paper.primaryCategory] ?? categoryShort(paper.primaryCategory);
+}
+
 function formatDate(d: Date) {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 }
@@ -161,7 +166,7 @@ function PendingThread({ paper }: { paper: Paper }) {
           <div className="min-w-0 text-[14px] leading-5">
             <div className="truncate font-semibold">{authorLine(paper.authors)}</div>
             <div className="truncate text-muted">
-              {CATEGORY_LABELS[paper.primaryCategory ?? ""] ?? categoryShort(paper.primaryCategory)} ·{" "}
+              {fieldLabel(paper)} ·{" "}
               {formatDate(paper.publishedAt)}
             </div>
           </div>
@@ -190,7 +195,7 @@ function PaperLinks({ paper }: { paper: Paper }) {
         </a>
       )}
       <a href={paper.absUrl} target="_blank" rel="noreferrer" className="rounded-full border border-line px-4 py-1.5 font-semibold">
-        arXiv page
+        {paper.source === "arxiv" ? "arXiv page" : "Publisher page"}
       </a>
     </div>
   );

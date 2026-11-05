@@ -248,12 +248,13 @@ function paperBrief(paper: Paper, material: Material): string {
     "pdf-text": "Write the thread for the paper below. Its full text follows, extracted from the PDF, so layout and maths may be garbled in places.",
     abstract: "The full text could not be retrieved. Write a short thread from the metadata and abstract below only.",
   };
-  const lines = [
+  const lines: (string | null)[] = [
     intro[material.mode],
     "",
     `Title: ${paper.title}`,
     `Authors: ${authors}`,
-    `Categories: ${paper.categories.join(", ")}`,
+    paper.categories.length ? `Categories: ${paper.categories.join(", ")}` : null,
+    paper.venue ? `Published in: ${paper.venue}` : null,
     `Submitted: ${paper.publishedAt.toISOString().slice(0, 10)}`,
     `Link: ${paper.absUrl}`,
   ];
@@ -262,5 +263,5 @@ function paperBrief(paper: Paper, material: Material): string {
     if (material.truncated) lines.push("", "Note: appendices and supplementary material were omitted for length.");
     lines.push("", "<paper>", material.text, "</paper>");
   }
-  return lines.join("\n");
+  return lines.filter((l) => l !== null).join("\n");
 }

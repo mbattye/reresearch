@@ -1,9 +1,11 @@
 import { XMLParser } from "fast-xml-parser";
 import type { NewPaper } from "../db/schema";
+import { USER_AGENT } from "./types";
 
 const API = "https://export.arxiv.org/api/query";
 // arXiv asks clients to identify themselves and keep to roughly one request every three seconds.
-const USER_AGENT = "reresearch/0.1 (personal research reader)";
+const MIN_GAP_MS = 3100;
+let lastRequest = 0;
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -20,6 +22,8 @@ interface AtomEntry {
   category?: { term: string }[];
   link?: { href: string; rel?: string; type?: string; title?: string }[];
   "arxiv:primary_category"?: { term: string };
+  "arxiv:doi"?: string;
+  "arxiv:journal_ref"?: string;
 }
 
 /** Newest submissions across the given categories. */
@@ -37,8 +41,12 @@ export async function fetchRecent(categories: string[], maxResults = 100): Promi
 
 /** Specific papers by arXiv id, e.g. "2611.06729" or "hep-th/9901001". */
 export async function fetchByIds(ids: string[]): Promise<NewPaper[]> {
-  if (ids.length === 0) return [];
-  return fetchFeed(new URLSearchParams({ id_list: ids.join(","), max_results: String(ids.length) }));
+  const out: NewPaper[] = [];
+  for (let i = 0; i < ids.length; i += 50) {
+    const chunk = ids.slice(i, i + 50);
+    out.push(...(await fetchFeed(new URLSearchParams({ id_list: chunk.join(","), max_results: String(chunk.length) }))));
+  }
+  return out;
 }
 
 /** Accepts a bare id, an abs/pdf/html URL, or "arXiv:" prefixed id. Returns the id without version. */
@@ -50,6 +58,9 @@ export function parseArxivId(input: string): string | null {
 }
 
 async function fetchFeed(params: URLSearchParams): Promise<NewPaper[]> {
+  const wait = lastRequest + MIN_GAP_MS - Date.now();
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  lastRequest = Date.now();
   const res = await fetch(`${API}?${params}`, {
     headers: { "User-Agent": USER_AGENT },
     cache: "no-store",
@@ -78,6 +89,8 @@ function toPaper(e: AtomEntry): NewPaper {
     publishedAt: new Date(e.published),
     absUrl: `https://arxiv.org/abs/${externalId}`,
     pdfUrl: pdf ? pdf.replace(/^http:/, "https:") : `https://arxiv.org/pdf/${externalId}`,
+    doi: e["arxiv:doi"] ? String(e["arxiv:doi"]).trim().toLowerCase() : null,
+    venue: e["arxiv:journal_ref"] ? clean(e["arxiv:journal_ref"]) : null,
   };
 }
 

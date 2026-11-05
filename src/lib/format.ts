@@ -21,3 +21,10 @@ export const SECTION_LABELS: Record<string, string> = {
   caveat: "Caveat",
   takeaway: "Takeaway",
 };
+
+/** Short "why you're seeing this" line for papers found by a discovery source. */
+export function discoveryLabel(p: { foundVia: string; citationCount: number | null }): string | null {
+  if (p.foundVia === "inspire") return `Trending in HEP · ${p.citationCount ?? 0} citations`;
+  if (p.foundVia === "semantic-scholar") return "Recommended from your likes";
+  return null;
+}

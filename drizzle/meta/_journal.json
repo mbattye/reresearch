@@ -15,6 +15,13 @@
       "when": 1793888627697,
       "tag": "0001_cost_batches_model",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793889556570,
+      "tag": "0002_more_sources",
+      "breakpoints": true
     }
   ]
 }

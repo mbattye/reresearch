@@ -38,6 +38,9 @@ export interface ScoreReason {
   weight: number;
 }
 
+/** Where a paper was discovered. */
+export type FoundVia = "arxiv" | "inspire" | "semantic-scholar" | "openalex" | "request";
+
 export const papers = pgTable(
   "papers",
   {
@@ -53,8 +56,15 @@ export const papers = pgTable(
     publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
     absUrl: text("abs_url").notNull(),
     pdfUrl: text("pdf_url"),
+    doi: text("doi"),
+    venue: text("venue"),
+    citationCount: integer("citation_count"),
+    foundVia: text("found_via").$type<FoundVia>().notNull().default("arxiv"),
+    // score = keyword/affinity interest (recomputed each run) + boost (set by the source that found it)
     score: real("score").notNull().default(0),
     scoreReasons: jsonb("score_reasons").$type<ScoreReason[]>().notNull().default([]),
+    boost: real("boost").notNull().default(0),
+    boostReasons: jsonb("boost_reasons").$type<ScoreReason[]>().notNull().default([]),
     // true when the reader asked for this paper explicitly rather than the ranker picking it
     requested: boolean("requested").notNull().default(false),
     status: text("status").$type<PaperStatus>().notNull().default("new"),
@@ -65,6 +75,7 @@ export const papers = pgTable(
   (t) => [
     index("papers_status_idx").on(t.status),
     index("papers_published_idx").on(t.publishedAt),
+    index("papers_doi_idx").on(t.doi),
   ],
 );
 
@@ -106,6 +117,11 @@ export interface Keyword {
   weight: number;
 }
 
+export interface SourceToggles {
+  inspireTrending: boolean;
+  recommendations: boolean;
+}
+
 // Single row (id = 1) holding the reader's stated interests.
 export const preferences = pgTable("preferences", {
   id: integer("id").primaryKey(),
@@ -115,6 +131,10 @@ export const preferences = pgTable("preferences", {
   // Null means use the SUMMARY_* environment defaults.
   summaryModel: text("summary_model"),
   summaryInput: text("summary_input").$type<"text" | "pdf">(),
+  sources: jsonb("sources")
+    .$type<SourceToggles>()
+    .notNull()
+    .default({ inspireTrending: true, recommendations: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

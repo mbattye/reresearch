@@ -13,7 +13,13 @@ arXiv API ──► papers table ──► ranker ──► top N ──► Clau
  daily cron        learned tags)            adjust tag affinities
 ```
 
-- **Sources** (`src/lib/sources/`): arXiv for now. Recent submissions in your categories are fetched on each run, and you can add any paper by arXiv link.
+- **Sources** (`src/lib/sources/`), each switchable in Settings:
+  - **arXiv**: new submissions in your categories.
+  - **INSPIRE-HEP trending**: the most-cited particle-physics papers of the last six weeks.
+  - **Semantic Scholar**: recommendations from the papers you like and save (and away from the ones you hide).
+  - **Add a paper**: any arXiv link or DOI. DOIs are looked up on OpenAlex, which finds the arXiv version if there is one, otherwise the best legal free copy.
+
+  Anything with an arXiv version is stored under its arXiv id so it gets the cheap HTML full text. Discovered papers carry a boost (citations, "similar to your likes") on top of the keyword score, and at most half of each run's write-ups go to them, so new submissions always get a look in.
 - **Ranking** (`src/lib/ranking.ts`): your keyword weights plus learned tag affinities matched against title (double weight) and abstract, then a four-day recency half-life at feed time. Every score keeps its reasons, which the Queue tab shows.
 - **Full text** (`src/lib/fulltext.ts`): arXiv's HTML version (sections, captions and maths as LaTeX, references dropped, appendices cut first when long), falling back to text extracted from the PDF, then to the abstract.
 - **Summaries** (`src/lib/summarise.ts`): Claude (Sonnet 5.5 by default, switchable in Settings) returns a structured thread: headline, hook, sectioned posts, TL;DR, key numbers, tags. The editorial voice lives in `SYSTEM_PROMPT` and is the main place to tune the writing.
@@ -62,7 +68,8 @@ Settings shows spend this month, and each thread shows what it cost. The model a
 
 ## Roadmap
 
-- Zotero connector (Web API: user id + API key) so your existing library feeds the queue
+- Zotero connector (Web API: user id + API key) so your existing library feeds the queue, plus BibTeX/RIS upload
+- Accounts, with users' own API keys (OpenAI, Anthropic, Gemini, Grok) or OpenRouter
+- OSTI.gov (fusion reports), bioRxiv/medRxiv and Europe PMC
 - Semantic ranking with embeddings, beyond keyword matching
 - Figures from the paper inline in threads
-- More sources: bioRxiv/medRxiv, Semantic Scholar, OpenAlex

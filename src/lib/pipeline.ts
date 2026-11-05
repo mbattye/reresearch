@@ -2,8 +2,12 @@ import "server-only";
 import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb, schema } from "./db";
 import type { NewPaper, Paper, Preferences } from "./db/schema";
-import { interestScore } from "./ranking";
+import { diversify, interestScore } from "./ranking";
 import { fetchByIds, fetchRecent, parseArxivId } from "./sources/arxiv";
+import { fetchTrending } from "./sources/inspire";
+import { lookupDoi } from "./sources/openalex";
+import { recommend } from "./sources/semanticscholar";
+import { doiCandidateToPaper, parseDoi, type Candidate } from "./sources/types";
 import {
   anthropic,
   buildParams,
@@ -19,7 +23,7 @@ import {
 import { costUsd } from "./pricing";
 import { DEFAULT_CATEGORIES, DEFAULT_KEYWORDS, DEFAULT_SUMMARIES_PER_RUN } from "./topics";
 
-const { papers, threads, preferences, termAffinity, summaryBatches } = schema;
+const { papers, threads, preferences, termAffinity, summaryBatches, interactions } = schema;
 
 // A summary that has been "summarising" this long died with its function; let it be retried.
 const STALE_SUMMARY_MS = 10 * 60 * 1000;
@@ -61,6 +65,8 @@ export async function getAffinity(): Promise<Map<string, number>> {
 
 export interface IngestReport {
   fetched: number;
+  discovered: number;
+  sourceErrors: string[];
   inserted: number;
   summarised: string[];
   failed: { id: string; error: string }[];
@@ -84,32 +90,35 @@ export async function ingest(opts: { summarise?: number; batch?: boolean } = {})
     .where(and(eq(papers.status, "summarising"), lt(papers.statusChangedAt, new Date(Date.now() - STALE_SUMMARY_MS))));
 
   const fetched = await fetchRecent(prefs.categories, 100);
-  const inserted = await upsertPapers(fetched, prefs, affinity);
+  const { candidates, errors } = await discover(prefs);
+  const discovered = await resolveCandidates(candidates);
+  const inserted = await upsertPapers([...fetched, ...discovered], prefs, affinity);
 
   // Rescore everything still waiting, since interests and affinities change between runs.
   const waiting = await db.select().from(papers).where(eq(papers.status, "new"));
   for (const p of waiting) {
     const { score, reasons } = interestScore(p, prefs.keywords, affinity);
-    if (score !== p.score) {
-      await db.update(papers).set({ score, scoreReasons: reasons }).where(eq(papers.id, p.id));
+    if (score + p.boost !== p.score) {
+      await db.update(papers).set({ score: score + p.boost, scoreReasons: reasons }).where(eq(papers.id, p.id));
     }
   }
 
   const limit = opts.summarise ?? prefs.summariesPerRun;
-  const picks = await db
+  const ranked = await db
     .select()
     .from(papers)
     .where(eq(papers.status, "new"))
     .orderBy(desc(papers.requested), desc(papers.score), desc(papers.publishedAt))
-    .limit(limit);
+    .limit(400);
+  const picks = diversify(ranked, limit);
 
   if (opts.batch) {
     const collected = await collectBatches();
     const batchId = picks.length ? await submitBatch(picks) : undefined;
-    return { fetched: fetched.length, inserted, summarised: [], failed: [], batchId, collected };
+    return { fetched: fetched.length, discovered: discovered.length, sourceErrors: errors, inserted, summarised: [], failed: [], batchId, collected };
   }
   const results = await summariseMany(picks);
-  return { fetched: fetched.length, inserted, ...results };
+  return { fetched: fetched.length, discovered: discovered.length, sourceErrors: errors, inserted, ...results };
 }
 
 /** Send papers to the Message Batches API (50% off; results usually within the hour, always within 24h). */
@@ -202,12 +211,28 @@ export async function collectBatches(): Promise<number> {
   return written;
 }
 
-/** Add specific papers the reader asked for (arXiv ids or URLs). Returns the paper ids. */
+/** Add specific papers the reader asked for (arXiv ids, DOIs, or links containing either). Returns the paper ids. */
 export async function requestPapers(inputs: string[]): Promise<string[]> {
-  const ids = [...new Set(inputs.map(parseArxivId).filter((x): x is string => !!x))];
-  if (ids.length === 0) throw new Error("Couldn't find an arXiv id in that");
-  const found = await fetchByIds(ids);
-  if (found.length === 0) throw new Error("arXiv didn't return that paper");
+  const candidates: Candidate[] = [];
+  const unknown: string[] = [];
+  for (const input of new Set(inputs)) {
+    const arxivId = /arxiv/i.test(input) || /^\d{4}\.\d{4,5}(v\d+)?$/.test(input.trim()) ? parseArxivId(input) : null;
+    const doi = arxivId ? null : parseDoi(input);
+    if (arxivId) {
+      candidates.push({ arxivId, title: "", authors: [], foundVia: "request", boost: 0, boostReasons: [] });
+    } else if (doi) {
+      const found = await lookupDoi(doi);
+      if (found) candidates.push({ ...found, foundVia: "request" });
+      else unknown.push(input);
+    } else {
+      unknown.push(input);
+    }
+  }
+  if (candidates.length === 0) {
+    throw new Error(`Couldn't find an arXiv id or DOI in ${unknown.join(", ") || "that"}`);
+  }
+  const found = await resolveCandidates(candidates);
+  if (found.length === 0) throw new Error("Found the paper, but no abstract or free full text to summarise");
 
   const db = await getDb();
   const prefs = await getPreferences();
@@ -226,6 +251,78 @@ export async function requestPapers(inputs: string[]): Promise<string[]> {
   return paperIds;
 }
 
+/**
+ * Turn source suggestions into papers. Anything with an arXiv id is re-fetched from arXiv
+ * (categories, abstract and the cheap HTML full text); the rest keep the source's metadata.
+ * A DOI-only candidate already stored under its arXiv id is skipped.
+ */
+export async function resolveCandidates(list: Candidate[]): Promise<NewPaper[]> {
+  const byArxiv = new Map<string, Candidate>();
+  const doiOnly: Candidate[] = [];
+  for (const c of list) {
+    if (c.arxivId) {
+      const prev = byArxiv.get(c.arxivId);
+      if (!prev || c.boost > prev.boost) byArxiv.set(c.arxivId, c);
+    } else if (c.doi) doiOnly.push(c);
+  }
+
+  const out: NewPaper[] = [];
+  const fromArxiv = await fetchByIds([...byArxiv.keys()]);
+  for (const p of fromArxiv) {
+    const c = byArxiv.get(p.externalId);
+    if (!c) continue;
+    out.push({
+      ...p,
+      doi: p.doi ?? c.doi ?? null,
+      venue: p.venue ?? c.venue ?? null,
+      citationCount: c.citationCount ?? null,
+      foundVia: c.foundVia,
+      boost: c.boost,
+      boostReasons: c.boostReasons,
+    });
+  }
+
+  if (doiOnly.length) {
+    const db = await getDb();
+    const known = new Set(
+      (await db.select({ doi: papers.doi }).from(papers).where(inArray(papers.doi, doiOnly.map((c) => c.doi!)))).map(
+        (r) => r.doi,
+      ),
+    );
+    for (const p of fromArxiv) if (p.doi) known.add(p.doi);
+    for (const c of doiOnly) {
+      if (known.has(c.doi!)) continue;
+      const paper = doiCandidateToPaper(c);
+      if (paper) out.push(paper);
+    }
+  }
+  return out;
+}
+
+/** Candidates from the discovery sources the reader has switched on. One failing source doesn't stop the others. */
+async function discover(prefs: Preferences): Promise<{ candidates: Candidate[]; errors: string[] }> {
+  const db = await getDb();
+  const jobs: Promise<Candidate[]>[] = [];
+  if (prefs.sources.inspireTrending) jobs.push(fetchTrending());
+  if (prefs.sources.recommendations) {
+    const liked = await db
+      .select({ id: interactions.paperId, hidden: interactions.hidden })
+      .from(interactions)
+      .where(sql`${interactions.liked} or ${interactions.saved} or ${interactions.hidden}`)
+      .orderBy(desc(interactions.updatedAt))
+      .limit(60);
+    const positive = liked.filter((r) => !r.hidden).map((r) => r.id).slice(0, 30);
+    const negative = liked.filter((r) => r.hidden).map((r) => r.id).slice(0, 15);
+    // A handful per run: enough to surface neighbours of what you like without flooding the queue.
+    if (positive.length) jobs.push(recommend(positive, negative, 15));
+  }
+  const settled = await Promise.allSettled(jobs);
+  return {
+    candidates: settled.flatMap((r) => (r.status === "fulfilled" ? r.value : [])),
+    errors: settled.flatMap((r) => (r.status === "rejected" ? [String(r.reason?.message ?? r.reason)] : [])),
+  };
+}
+
 /** Summarise specific papers now (used for reader requests and the "summarise" button in the queue). */
 export async function summariseByIds(ids: string[]) {
   const db = await getDb();
@@ -241,20 +338,26 @@ async function upsertPapers(list: NewPaper[], prefs: Preferences, affinity: Map<
   const db = await getDb();
   const rows = list.map((p) => {
     const { score, reasons } = interestScore(p, prefs.keywords, affinity);
-    return { ...p, score, scoreReasons: reasons };
+    return { ...p, score: score + (p.boost ?? 0), scoreReasons: reasons };
   });
   const inserted = await db
     .insert(papers)
     .values(rows)
     .onConflictDoUpdate({
       target: papers.id,
-      // Keep our own state; refresh what arXiv may have revised.
+      // Keep our own state; refresh what the source may have revised, and keep the strongest boost
+      // when several sources find the same paper.
       set: {
         title: sql`excluded.title`,
         abstract: sql`excluded.abstract`,
         authors: sql`excluded.authors`,
         categories: sql`excluded.categories`,
-        pdfUrl: sql`excluded.pdf_url`,
+        pdfUrl: sql`coalesce(excluded.pdf_url, ${papers.pdfUrl})`,
+        doi: sql`coalesce(excluded.doi, ${papers.doi})`,
+        venue: sql`coalesce(excluded.venue, ${papers.venue})`,
+        citationCount: sql`coalesce(excluded.citation_count, ${papers.citationCount})`,
+        boostReasons: sql`case when excluded.boost > ${papers.boost} then excluded.boost_reasons else ${papers.boostReasons} end`,
+        boost: sql`greatest(excluded.boost, ${papers.boost})`,
       },
     })
     // xmax = 0 only for rows this statement inserted rather than updated.

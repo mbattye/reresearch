@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { FeedItem } from "@/lib/feed";
-import { authorLine, relativeTime } from "@/lib/format";
+import { authorLine, discoveryLabel, relativeTime } from "@/lib/format";
 import { categoryShort } from "@/lib/topics";
 import { ActionBar } from "./ActionBar";
 import { Avatar } from "./Avatar";
@@ -9,6 +9,7 @@ export function PostCard({ item }: { item: FeedItem }) {
   const { paper, thread, interaction } = item;
   const read = !!interaction?.readAt;
   const href = `/p/${encodeURIComponent(paper.id)}`;
+  const why = discoveryLabel(paper);
 
   return (
     <article className="relative flex gap-3 border-b border-line px-4 py-3">
@@ -17,10 +18,12 @@ export function PostCard({ item }: { item: FeedItem }) {
         <header className="flex items-baseline gap-1 text-[14px] leading-5">
           <span className="truncate font-semibold">{authorLine(paper.authors)}</span>
           <span className="shrink-0 text-muted">
-            · {categoryShort(paper.primaryCategory)} · {relativeTime(paper.publishedAt)}
+            · {paper.primaryCategory ? categoryShort(paper.primaryCategory) : (paper.venue ?? "journal")} ·{" "}
+            {relativeTime(paper.publishedAt)}
           </span>
         </header>
 
+        {why && <div className="mt-0.5 text-[12.5px] font-medium text-accent">{why}</div>}
         <Link href={href} className="block after:absolute after:inset-0 after:content-['']">
           <h2 className={`mt-0.5 text-[15.5px] leading-snug font-semibold ${read ? "text-muted" : ""}`}>
             {thread.headline}

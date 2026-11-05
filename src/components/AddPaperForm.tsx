@@ -11,7 +11,7 @@ export function AddPaperForm() {
         <input
           name="papers"
           required
-          placeholder="https://arxiv.org/abs/2611.06729"
+          placeholder="arXiv link or DOI"
           autoComplete="off"
           autoCapitalize="off"
           className="min-w-0 flex-1 rounded-lg border border-line bg-bg px-3 py-2 text-[14px]"
