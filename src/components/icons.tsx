@@ -48,3 +48,9 @@ export const BackIcon = ({ className }: P) => (
     <path d="M19 12H5M11 6l-6 6 6 6" />
   </svg>
 );
+
+export const RefreshIcon = ({ className }: P) => (
+  <svg {...base()} className={className}>
+    <path d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4" />
+  </svg>
+);

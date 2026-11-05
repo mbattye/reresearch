@@ -21,13 +21,31 @@ export async function markThreadRead(paperId: string) {
   await markRead(paperId);
 }
 
-/** Fetch and summarise in the background so the button returns immediately. */
-export async function runIngest() {
-  after(async () => {
-    const report = await ingest();
-    console.log("[ingest]", JSON.stringify(report));
-  });
-  redirect("/?tab=queue");
+export type FetchState = { ok: boolean; message: string } | null;
+
+/**
+ * Fetch and rank now (a few seconds) so the reader gets a real answer, then write the picks
+ * up in the background; the feed shows them as they land.
+ */
+export async function fetchPapers(): Promise<FetchState> {
+  try {
+    const report = await ingest({ defer: true });
+    const picked = report.picked ?? [];
+    if (picked.length) {
+      after(async () => {
+        const result = await summariseByIds(picked);
+        console.log("[fetch]", JSON.stringify(result));
+      });
+    }
+    refresh();
+    const found = report.inserted === 0 ? "No new papers since the last fetch." : `Found ${report.inserted} new paper${report.inserted === 1 ? "" : "s"}.`;
+    const writing = picked.length
+      ? ` Writing up the best ${picked.length}; they'll appear in For you within a minute or two.`
+      : " Nothing left to write up.";
+    return { ok: true, message: found + writing };
+  } catch (err) {
+    return { ok: false, message: `Fetch failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
 }
 
 export type AddPaperState = { ok: boolean; message: string } | null;

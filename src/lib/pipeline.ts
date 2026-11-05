@@ -116,6 +116,7 @@ export interface IngestReport {
   failed: { id: string; error: string }[];
   batchId?: string;
   collected?: number;
+  picked?: string[];
 }
 
 /**
@@ -123,7 +124,7 @@ export interface IngestReport {
  * With `batch`, the summaries go to a half-price Message Batch and are collected on a later call
  * (each cron run, and while the app is open) instead of being written now.
  */
-export async function ingest(opts: { summarise?: number; batch?: boolean } = {}): Promise<IngestReport> {
+export async function ingest(opts: { summarise?: number; batch?: boolean; defer?: boolean } = {}): Promise<IngestReport> {
   const db = await getDb();
   const prefs = await getPreferences();
   const affinity = await getAffinity();
@@ -156,6 +157,10 @@ export async function ingest(opts: { summarise?: number; batch?: boolean } = {})
     .limit(400);
   const picks = diversify(ranked, limit);
 
+  // The caller writes the picks itself (e.g. in the background after answering the request).
+  if (opts.defer) {
+    return { fetched: fetched.length, discovered: discovered.length, sourceErrors: errors, inserted, summarised: [], failed: [], picked: picks.map((p) => p.id) };
+  }
   if (opts.batch) {
     const collected = await collectBatches();
     const batchId = picks.length ? await submitBatch(picks) : undefined;

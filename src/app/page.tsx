@@ -7,7 +7,7 @@ import { Header } from "@/components/Header";
 import { PostCard } from "@/components/PostCard";
 import { QueueList } from "@/components/QueueList";
 import { getFeed, getQueue, getStatusCounts, type FeedTab } from "@/lib/feed";
-import { runIngest } from "./actions";
+import { FetchButton } from "@/components/FetchButton";
 
 export const maxDuration = 300;
 
@@ -72,16 +72,6 @@ async function Queue() {
         <QueueList papers={papers} />
       )}
     </main>
-  );
-}
-
-function FetchButton() {
-  return (
-    <form action={runIngest}>
-      <button className="shrink-0 rounded-full bg-fg px-4 py-1.5 text-[13px] font-semibold whitespace-nowrap text-bg hover:opacity-90">
-        Fetch new
-      </button>
-    </form>
   );
 }
 

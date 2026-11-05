@@ -7,7 +7,8 @@ import { getSpend, getTopAffinities } from "@/lib/feed";
 import { getPreferences, getSummaryConfig, monthlyBudget } from "@/lib/pipeline";
 import { formatUsd } from "@/lib/pricing";
 import { CATEGORY_LABELS, SUMMARY_MODELS } from "@/lib/topics";
-import { runIngest, savePreferences } from "../actions";
+import { FetchButton } from "@/components/FetchButton";
+import { savePreferences } from "../actions";
 
 export const maxDuration = 300;
 
@@ -259,12 +260,10 @@ async function Settings() {
 
       <section className="px-4 py-4">
         <h2 className={sectionTitle}>Fetch now</h2>
-        <p className={hint}>Runs automatically once a day when deployed. This fetches and summarises in the background.</p>
-        <form action={runIngest} className="mt-3">
-          <button className="rounded-full border border-line px-4 py-1.5 text-[14px] font-semibold hover:bg-raised">
-            Fetch &amp; summarise
-          </button>
-        </form>
+        <p className={hint}>Runs automatically every morning. Fetching now writes up the best few straight away.</p>
+        <div className="mt-3">
+          <FetchButton />
+        </div>
       </section>
     </main>
   );

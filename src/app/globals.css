@@ -42,6 +42,14 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
+/* Tailwind v4's reset gives buttons the default arrow cursor; anything clickable should say so. */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+summary,
+label:has(input:not(:disabled)) {
+  cursor: pointer;
+}
+
 body {
   background: var(--bg);
   color: var(--fg);

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { FeedTab } from "@/lib/feed";
+import { FetchButton } from "./FetchButton";
 import { SettingsIcon } from "./icons";
 
 const TABS: { id: FeedTab; label: string }[] = [
@@ -16,9 +17,16 @@ export function Header({ tab }: { tab: FeedTab }) {
         <Link href="/" className="text-[17px] font-bold tracking-tight">
           re<span className="text-accent">research</span>
         </Link>
-        <Link href="/settings" className="-m-2 p-2 text-muted hover:text-fg" aria-label="Settings">
-          <SettingsIcon className="size-5" />
-        </Link>
+        <div className="flex items-center gap-5">
+          <FetchButton variant="icon" />
+          <Link
+            href="/settings"
+            className="-m-2 rounded-full p-2 text-muted transition hover:bg-raised hover:text-fg"
+            aria-label="Settings"
+          >
+            <SettingsIcon className="size-5" />
+          </Link>
+        </div>
       </div>
       <nav className="flex">
         {TABS.map((t) => (
