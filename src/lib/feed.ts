@@ -44,12 +44,15 @@ export async function getFeed(tab: Exclude<FeedTab, "queue">): Promise<FeedItem[
   return rows;
 }
 
-export async function getThread(paperId: string): Promise<FeedItem | null> {
+/** A paper with its thread if one has been written yet. */
+export async function getPaperView(
+  paperId: string,
+): Promise<{ paper: Paper; thread: Thread | null; interaction: Interaction | null } | null> {
   const db = await getDb();
   const [row] = await db
     .select({ paper: papers, thread: threads, interaction: interactions })
-    .from(threads)
-    .innerJoin(papers, eq(papers.id, threads.paperId))
+    .from(papers)
+    .leftJoin(threads, eq(threads.paperId, papers.id))
     .leftJoin(interactions, eq(interactions.paperId, papers.id))
     .where(eq(papers.id, paperId));
   return row ?? null;
@@ -63,12 +66,28 @@ export async function getQueue(): Promise<Paper[]> {
     .from(papers)
     .where(ne(papers.status, "ready"))
     .orderBy(
-      sql`case ${papers.status} when 'summarising' then 0 when 'failed' then 1 else 2 end`,
+      sql`case ${papers.status} when 'summarising' then 0 when 'batched' then 1 when 'failed' then 2 else 3 end`,
       desc(papers.requested),
       desc(papers.score),
       desc(papers.publishedAt),
     )
     .limit(150);
+}
+
+export async function getSpend() {
+  const db = await getDb();
+  const monthStart = new Date();
+  monthStart.setUTCDate(1);
+  monthStart.setUTCHours(0, 0, 0, 0);
+  const [row] = await db
+    .select({
+      month: sql<number>`coalesce(sum(${threads.costUsd}) filter (where ${threads.createdAt} >= ${monthStart}), 0)::float`,
+      monthCount: sql<number>`count(*) filter (where ${threads.createdAt} >= ${monthStart})::int`,
+      total: sql<number>`coalesce(sum(${threads.costUsd}), 0)::float`,
+      count: sql<number>`count(${threads.costUsd})::int`,
+    })
+    .from(threads);
+  return row;
 }
 
 export async function getStatusCounts() {

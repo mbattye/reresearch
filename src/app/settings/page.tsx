@@ -3,9 +3,10 @@ import { Suspense } from "react";
 import { connection } from "next/server";
 import { AddPaperForm } from "@/components/AddPaperForm";
 import { BackIcon } from "@/components/icons";
-import { getTopAffinities } from "@/lib/feed";
-import { getPreferences } from "@/lib/pipeline";
-import { CATEGORY_LABELS } from "@/lib/topics";
+import { getSpend, getTopAffinities } from "@/lib/feed";
+import { getPreferences, getSummaryConfig } from "@/lib/pipeline";
+import { formatUsd } from "@/lib/pricing";
+import { CATEGORY_LABELS, SUMMARY_MODELS } from "@/lib/topics";
 import { runIngest, savePreferences } from "../actions";
 
 export const maxDuration = 300;
@@ -31,7 +32,12 @@ const hint = "mt-0.5 text-[13px] text-muted";
 
 async function Settings() {
   await connection();
-  const [prefs, affinities] = await Promise.all([getPreferences(), getTopAffinities()]);
+  const [prefs, affinities, config, spend] = await Promise.all([
+    getPreferences(),
+    getTopAffinities(),
+    getSummaryConfig(),
+    getSpend(),
+  ]);
   const extra = prefs.categories.filter((c) => !(c in CATEGORY_LABELS));
 
   return (
@@ -94,11 +100,55 @@ async function Settings() {
               className="w-20 rounded-lg border border-line bg-bg px-3 py-1.5 text-right"
             />
           </label>
+        </section>
+
+        <section className="px-4 py-4">
+          <h2 className={sectionTitle}>Writing threads</h2>
+          <p className={hint}>
+            Cheaper models are faster but less careful with nuance and numbers. Scheduled runs use the half-price batch API.
+          </p>
+          <div className="mt-3 grid gap-1">
+            {SUMMARY_MODELS.map((m) => (
+              <label key={m.id} className="flex items-center gap-3 rounded-lg px-1 py-1.5 text-[14px] hover:bg-raised">
+                <input
+                  type="radio"
+                  name="summaryModel"
+                  value={m.id}
+                  defaultChecked={config.model === m.id}
+                  className="size-4 accent-[var(--accent)]"
+                />
+                <span>{m.label}</span>
+                <span className="ml-auto text-[12.5px] text-muted">{m.note}</span>
+              </label>
+            ))}
+          </div>
+          <label className="mt-3 flex items-start gap-3 px-1 text-[14px]">
+            <input
+              type="checkbox"
+              name="summaryInput"
+              value="pdf"
+              defaultChecked={config.input === "pdf"}
+              className="mt-0.5 size-4 accent-[var(--accent)]"
+            />
+            <span>
+              Read the full PDF, figures included
+              <span className="block text-[12.5px] text-muted">About 3× the cost. Off reads the extracted text.</span>
+            </span>
+          </label>
           <button className="mt-4 w-full rounded-full bg-fg py-2 text-[14px] font-semibold text-bg hover:opacity-90">
             Save
           </button>
         </section>
       </form>
+
+      <section className="px-4 py-4">
+        <h2 className={sectionTitle}>Spend</h2>
+        <p className="mt-1 text-[14px]">
+          {formatUsd(spend.month)} this month across {spend.monthCount} thread{spend.monthCount === 1 ? "" : "s"}
+          {spend.count > 0 && <span className="text-muted"> · {formatUsd(spend.total / spend.count)} average</span>}
+        </p>
+        <p className={hint}>Estimated from token usage at list prices.</p>
+      </section>
 
       <section className="px-4 py-4">
         <h2 className={sectionTitle}>Learned from your reading</h2>

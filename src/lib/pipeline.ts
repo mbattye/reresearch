@@ -4,10 +4,22 @@ import { getDb, schema } from "./db";
 import type { NewPaper, Paper, Preferences } from "./db/schema";
 import { interestScore } from "./ranking";
 import { fetchByIds, fetchRecent, parseArxivId } from "./sources/arxiv";
-import { summarisePaper } from "./summarise";
+import {
+  anthropic,
+  buildParams,
+  defaultConfig,
+  parseThread,
+  prepareMaterial,
+  summarisePaper,
+  totalInput,
+  type GeneratedThread,
+  type SummaryConfig,
+  type SummaryResult,
+} from "./summarise";
+import { costUsd } from "./pricing";
 import { DEFAULT_CATEGORIES, DEFAULT_KEYWORDS, DEFAULT_SUMMARIES_PER_RUN } from "./topics";
 
-const { papers, threads, preferences, termAffinity } = schema;
+const { papers, threads, preferences, termAffinity, summaryBatches } = schema;
 
 // A summary that has been "summarising" this long died with its function; let it be retried.
 const STALE_SUMMARY_MS = 10 * 60 * 1000;
@@ -30,6 +42,17 @@ export async function getPreferences(): Promise<Preferences> {
   return created ?? (await db.select().from(preferences).where(eq(preferences.id, 1)))[0];
 }
 
+/** Settings override the environment defaults. */
+export async function getSummaryConfig(): Promise<SummaryConfig> {
+  const prefs = await getPreferences();
+  const base = defaultConfig();
+  return {
+    ...base,
+    model: prefs.summaryModel ?? base.model,
+    input: prefs.summaryInput ?? base.input,
+  };
+}
+
 export async function getAffinity(): Promise<Map<string, number>> {
   const db = await getDb();
   const rows = await db.select().from(termAffinity);
@@ -41,10 +64,16 @@ export interface IngestReport {
   inserted: number;
   summarised: string[];
   failed: { id: string; error: string }[];
+  batchId?: string;
+  collected?: number;
 }
 
-/** Fetch new papers for the reader's categories, score them, and summarise the most interesting few. */
-export async function ingest(opts: { summarise?: number } = {}): Promise<IngestReport> {
+/**
+ * Fetch new papers for the reader's categories, score them, and summarise the most interesting few.
+ * With `batch`, the summaries go to a half-price Message Batch and are collected on a later call
+ * (each cron run, and while the app is open) instead of being written now.
+ */
+export async function ingest(opts: { summarise?: number; batch?: boolean } = {}): Promise<IngestReport> {
   const db = await getDb();
   const prefs = await getPreferences();
   const affinity = await getAffinity();
@@ -74,8 +103,103 @@ export async function ingest(opts: { summarise?: number } = {}): Promise<IngestR
     .orderBy(desc(papers.requested), desc(papers.score), desc(papers.publishedAt))
     .limit(limit);
 
+  if (opts.batch) {
+    const collected = await collectBatches();
+    const batchId = picks.length ? await submitBatch(picks) : undefined;
+    return { fetched: fetched.length, inserted, summarised: [], failed: [], batchId, collected };
+  }
   const results = await summariseMany(picks);
   return { fetched: fetched.length, inserted, ...results };
+}
+
+/** Send papers to the Message Batches API (50% off; results usually within the hour, always within 24h). */
+export async function submitBatch(list: Paper[]): Promise<string | undefined> {
+  const db = await getDb();
+  const ids = list.map((p) => p.id);
+  const claimed = await db
+    .update(papers)
+    .set({ status: "batched", statusChangedAt: new Date(), error: null })
+    .where(and(inArray(papers.id, ids), inArray(papers.status, ["new", "failed"])))
+    .returning({ id: papers.id });
+  const claimedIds = new Set(claimed.map((c) => c.id));
+  const toSend = list.filter((p) => claimedIds.has(p.id));
+  if (toSend.length === 0) return undefined;
+
+  try {
+    const config = await getSummaryConfig();
+    const inputModes: Record<string, string> = {};
+    const requests = [];
+    for (const p of toSend) {
+      const material = await prepareMaterial(p, config);
+      inputModes[p.id] = material.mode;
+      // custom_id allows only [a-zA-Z0-9_-]; map back via the stored paper list.
+      requests.push({ custom_id: `p${requests.length}`, params: buildParams(p, material, config) });
+    }
+    const batch = await anthropic().messages.batches.create({ requests });
+    await db.insert(summaryBatches).values({
+      id: batch.id,
+      paperIds: toSend.map((p) => p.id),
+      model: config.model,
+      inputModes,
+    });
+    return batch.id;
+  } catch (err) {
+    await db
+      .update(papers)
+      .set({ status: "new", statusChangedAt: new Date() })
+      .where(inArray(papers.id, [...claimedIds]));
+    throw err;
+  }
+}
+
+/** Save results from any finished batches. Returns how many threads were written. */
+export async function collectBatches(): Promise<number> {
+  const db = await getDb();
+  const pending = await db.select().from(summaryBatches).where(eq(summaryBatches.status, "pending"));
+  let written = 0;
+  for (const b of pending) {
+    const batch = await anthropic().messages.batches.retrieve(b.id);
+    if (batch.processing_status !== "ended") continue;
+
+    const done = new Set<string>();
+    for await (const r of await anthropic().messages.batches.results(b.id)) {
+      const paperId = b.paperIds[Number(r.custom_id.slice(1))];
+      if (!paperId) continue;
+      done.add(paperId);
+      if (r.result.type !== "succeeded") {
+        await markFailed(paperId, `Batch request ${r.result.type}`);
+        continue;
+      }
+      const message = r.result.message;
+      try {
+        const inputTokens = totalInput(message.usage);
+        await saveThread(paperId, {
+          thread: parseThread(message),
+          inputMode: (b.inputModes[paperId] ?? "abstract") as SummaryResult["inputMode"],
+          model: message.model,
+          inputTokens,
+          outputTokens: message.usage.output_tokens,
+          costUsd: costUsd({ model: message.model, inputTokens, outputTokens: message.usage.output_tokens, batch: true }),
+        }, true);
+        written++;
+      } catch (err) {
+        await markFailed(paperId, err instanceof Error ? err.message : String(err));
+      }
+    }
+    // Anything the batch didn't return goes back in the queue.
+    const missing = b.paperIds.filter((id) => !done.has(id));
+    if (missing.length) {
+      await db
+        .update(papers)
+        .set({ status: "new", statusChangedAt: new Date() })
+        .where(and(inArray(papers.id, missing), eq(papers.status, "batched")));
+    }
+    await db
+      .update(summaryBatches)
+      .set({ status: "collected", collectedAt: new Date() })
+      .where(eq(summaryBatches.id, b.id));
+  }
+  return written;
 }
 
 /** Add specific papers the reader asked for (arXiv ids or URLs). Returns the paper ids. */
@@ -139,6 +263,7 @@ async function upsertPapers(list: NewPaper[], prefs: Preferences, affinity: Map<
 }
 
 async function summariseMany(list: Paper[]) {
+  const config = await getSummaryConfig();
   const summarised: string[] = [];
   const failed: { id: string; error: string }[] = [];
   const queue = [...list];
@@ -146,7 +271,7 @@ async function summariseMany(list: Paper[]) {
   const worker = async () => {
     for (let p = queue.shift(); p; p = queue.shift()) {
       try {
-        await summariseOne(p);
+        await summariseOne(p, config);
         summarised.push(p.id);
       } catch (err) {
         failed.push({ id: p.id, error: err instanceof Error ? err.message : String(err) });
@@ -157,7 +282,7 @@ async function summariseMany(list: Paper[]) {
   return { summarised, failed };
 }
 
-async function summariseOne(paper: Paper) {
+async function summariseOne(paper: Paper, config: SummaryConfig) {
   const db = await getDb();
   // Claim the paper so concurrent runs don't summarise it twice.
   const claimed = await db
@@ -168,32 +293,42 @@ async function summariseOne(paper: Paper) {
   if (claimed.length === 0) return;
 
   try {
-    const r = await summarisePaper(paper);
-    const t = r.thread;
-    const values = {
-      paperId: paper.id,
-      headline: t.headline,
-      hook: t.hook,
-      posts: t.posts,
-      tldr: t.tldr,
-      keyNumbers: t.key_numbers,
-      tags: t.tags.map((x) => x.toLowerCase().replace(/^#/, "")),
-      level: t.level,
-      paperType: t.paper_type,
-      inputMode: r.inputMode,
-      model: r.model,
-      inputTokens: r.inputTokens,
-      outputTokens: r.outputTokens,
-      createdAt: new Date(),
-    };
-    await db.insert(threads).values(values).onConflictDoUpdate({ target: threads.paperId, set: values });
-    await db.update(papers).set({ status: "ready", statusChangedAt: new Date() }).where(eq(papers.id, paper.id));
+    await saveThread(paper.id, await summarisePaper(paper, config), false);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await db
-      .update(papers)
-      .set({ status: "failed", error: message.slice(0, 1000), statusChangedAt: new Date() })
-      .where(eq(papers.id, paper.id));
+    await markFailed(paper.id, err instanceof Error ? err.message : String(err));
     throw err;
   }
+}
+
+async function saveThread(paperId: string, r: SummaryResult, batched: boolean) {
+  const db = await getDb();
+  const t: GeneratedThread = r.thread;
+  const values = {
+    paperId,
+    headline: t.headline,
+    hook: t.hook,
+    posts: t.posts,
+    tldr: t.tldr,
+    keyNumbers: t.key_numbers,
+    tags: t.tags.map((x) => x.toLowerCase().replace(/^#/, "")),
+    level: t.level,
+    paperType: t.paper_type,
+    inputMode: r.inputMode,
+    model: r.model,
+    inputTokens: r.inputTokens,
+    outputTokens: r.outputTokens,
+    costUsd: r.costUsd,
+    batched,
+    createdAt: new Date(),
+  };
+  await db.insert(threads).values(values).onConflictDoUpdate({ target: threads.paperId, set: values });
+  await db.update(papers).set({ status: "ready", statusChangedAt: new Date() }).where(eq(papers.id, paperId));
+}
+
+async function markFailed(paperId: string, message: string) {
+  const db = await getDb();
+  await db
+    .update(papers)
+    .set({ status: "failed", error: message.slice(0, 1000), statusChangedAt: new Date() })
+    .where(eq(papers.id, paperId));
 }

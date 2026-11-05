@@ -53,3 +53,10 @@ export function categoryShort(cat: string | null | undefined): string {
   if (!cat) return "paper";
   return cat.replace(/^physics\./, "").replace(/^astro-ph\./, "astro-");
 }
+
+/** Models offered in settings, cheapest first. Costs measured on recent physics papers read as text. */
+export const SUMMARY_MODELS = [
+  { id: "claude-haiku-5-5", label: "Claude Haiku 5.5", note: "under 1¢ a paper · plainer" },
+  { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", note: "~6¢ (3¢ batched) · default" },
+  { id: "claude-opus-5-5", label: "Claude Opus 5.5", note: "~14¢ (7¢ batched) · sharpest" },
+];

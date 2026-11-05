@@ -1,27 +1,49 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import type { Paper } from "./db/schema";
+import type { Paper, ThreadPost, ThreadSection } from "./db/schema";
+import { downloadPdf, getFullText } from "./fulltext";
+import { costUsd } from "./pricing";
 
-const MODEL = process.env.SUMMARY_MODEL ?? "claude-opus-5-5";
-const EFFORT = (process.env.SUMMARY_EFFORT ?? "medium") as "low" | "medium" | "high" | "xhigh" | "max";
-// The API accepts PDFs up to 32 MB per request; leave headroom for base64 overhead.
-const MAX_PDF_BYTES = 22 * 1024 * 1024;
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+
+export interface SummaryConfig {
+  model: string;
+  effort: Effort;
+  /** "text": extracted full text (cheap). "pdf": the whole PDF as a document, figures included (~3x the tokens). */
+  input: "text" | "pdf";
+}
+
+export function defaultConfig(): SummaryConfig {
+  return {
+    model: process.env.SUMMARY_MODEL ?? "claude-sonnet-5-5",
+    effort: (process.env.SUMMARY_EFFORT as Effort | undefined) ?? "medium",
+    input: process.env.SUMMARY_INPUT === "pdf" ? "pdf" : "text",
+  };
+}
+
+// Server-side refusal fallback ("default" mode) is offered for these models on the Claude API.
+const FALLBACK_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5", "claude-fable-5-1"];
 
 let client: Anthropic | undefined;
+export function anthropic(): Anthropic {
+  client ??= new Anthropic();
+  return client;
+}
 
 export const ThreadSchema = z.object({
   headline: z
     .string()
-    .describe("Specific, plain-language headline for the finding, under ~90 characters. Not clickbait, not the paper title."),
+    .describe("The punchline in plain language, under ~90 characters. Not clickbait, not the paper title, not just the topic."),
   hook: z
     .string()
-    .describe("Opening post: the most interesting concrete thing the paper shows, stated precisely, 1-3 sentences."),
+    .describe("Opening post: the point of the paper in plain words, then the number that carries it. Under ~300 characters."),
   posts: z
     .array(
       z.object({
-        section: z.enum(["context", "approach", "result", "caveat", "takeaway"]),
+        section: z.string().describe("One of: context, approach, result, caveat, takeaway."),
         text: z.string().describe("One post, 1-4 sentences, under ~450 characters."),
       }),
     )
@@ -29,19 +51,70 @@ export const ThreadSchema = z.object({
   tldr: z.string().describe("One sentence a reader could repeat to a colleague."),
   key_numbers: z
     .array(z.object({ value: z.string(), label: z.string() }))
-    .describe("0-4 headline figures from the paper with units/uncertainties, e.g. value '5.2σ', label 'excess over background'."),
+    .describe(
+      "0-4 headline figures with units/uncertainties. Label in plain words, under ~40 characters, no symbols or conditions, e.g. value '5.2σ', label 'excess over background'.",
+    ),
   tags: z.array(z.string()).describe("3-6 lowercase topic tags, specific (e.g. 'tokamak', 'neutrino oscillations'), no '#'."),
-  level: z.enum(["accessible", "intermediate", "specialist"]).describe("How much background the paper itself demands."),
-  paper_type: z.enum(["experimental", "theoretical", "computational", "phenomenology", "instrumentation", "review", "other"]),
+  level: z.string().describe("How much background the paper itself demands. One of: accessible, intermediate, specialist."),
+  paper_type: z
+    .string()
+    .describe("One of: experimental, theoretical, computational, phenomenology, instrumentation, review, other."),
 });
 
-export type GeneratedThread = z.infer<typeof ThreadSchema>;
+// Plain strings above, not z.enum: the SDK's schema transform can't send enums to the API, so they
+// aren't enforced and smaller models sometimes answer "results" or "limitations". Normalise instead.
+export type GeneratedThread = Omit<z.infer<typeof ThreadSchema>, "posts"> & { posts: ThreadPost[] };
+
+const SECTION_ALIASES: Record<string, ThreadSection> = {
+  context: "context",
+  background: "context",
+  motivation: "context",
+  introduction: "context",
+  approach: "approach",
+  method: "approach",
+  methods: "approach",
+  setup: "approach",
+  result: "result",
+  results: "result",
+  finding: "result",
+  findings: "result",
+  caveat: "caveat",
+  caveats: "caveat",
+  limitation: "caveat",
+  limitations: "caveat",
+  takeaway: "takeaway",
+  takeaways: "takeaway",
+  implications: "takeaway",
+  conclusion: "takeaway",
+  outlook: "takeaway",
+};
+
+function normalise(raw: z.infer<typeof ThreadSchema>): GeneratedThread {
+  const pick = (value: string, allowed: string[], fallback: string) => {
+    const v = value.toLowerCase().trim();
+    return allowed.includes(v) ? v : fallback;
+  };
+  return {
+    ...raw,
+    posts: raw.posts.map((p, i) => ({
+      section: SECTION_ALIASES[p.section.toLowerCase().trim()] ?? (i === 0 ? "context" : "result"),
+      text: p.text,
+    })),
+    level: pick(raw.level, ["accessible", "intermediate", "specialist"], "intermediate"),
+    paper_type: pick(
+      raw.paper_type,
+      ["experimental", "theoretical", "computational", "phenomenology", "instrumentation", "review", "other"],
+      "other",
+    ),
+  };
+}
 
 const SYSTEM_PROMPT = `You write threads for reresearch, a feed that turns research papers into short posts the reader scrolls through on their phone in spare moments. The reader is sharp and curious, comfortable with undergraduate physics and maths, but usually not a specialist in the paper's subfield. They want to understand what the paper actually did and found, and come away knowing something real. They do not want to be sold to, and they do not want a press release.
 
 Read the whole paper before writing. Then build the thread:
 
-- Hook: the single most interesting concrete thing the paper establishes, stated precisely. A specific claim with its number beats a vague teaser. No questions as hooks.
+- Headline: the punchline, not the topic. "X could detect Y, but too weakly to Z" beats "Study examines X".
+- Hook: what the paper establishes and why that is interesting, in plain words first, then the one number that carries it. Someone skimming the feed should get the point from the hook alone. Keep it under about 300 characters; save full expressions, conditions and qualifiers for later posts. No questions as hooks.
 - Context (from the introduction): the open problem or tension this work addresses, what was known before, and what limited earlier attempts. Enough that the result means something.
 - Approach (from the method): what they actually did. The apparatus, dataset, model or derivation; the key technique and, in a clause, how it works. Mention scale where it matters (luminosity, qubit count, shot count, simulation size).
 - Results: the main findings with the numbers that carry them: values, uncertainties, significance, and the comparison that gives them meaning (previous best, theory prediction, Standard Model expectation).
@@ -54,6 +127,7 @@ Voice:
 - No hype words (breakthrough, game-changer, revolutionary, mind-blowing), no exclamation marks, no emojis, no hashtags, no thread markers like "1/" or "🧵", and none of "Let's dive in", "Buckle up", "Here's the thing", "But wait".
 - Analogies: avoid them. Use one only if it explains a mechanism better than a direct description would; most threads should contain none. Never stack them.
 - Keep the field's real terminology, because the reader wants to learn it, and define each term in a short clause the first time it appears.
+- Leave out the paper's internal labels (shot or run numbers, figure, table and equation numbers, names like "S60" for a flux surface) unless the reader genuinely needs them.
 - Numbers keep their units and uncertainties as reported. Use Unicode for light maths (σ, ħ, √s = 13.6 TeV, 10⁻⁹, ≲, ⟨n⟩). No LaTeX.
 - Be calibrated: separate what was measured, what was inferred and what was speculated. Attribute claims to the authors where they are the authors' interpretation.
 - British English spelling.
@@ -61,38 +135,74 @@ Voice:
 
 Accuracy rules: use only what is in the paper. Do not invent numbers, comparisons or context. If you were given only the abstract, say so in the caveat post, write fewer posts, and do not pad.`;
 
+export type InputMode = "html" | "pdf-text" | "pdf" | "abstract";
+
+/** What the model reads: extracted text, the PDF itself, or just the abstract. */
+export interface Material {
+  mode: InputMode;
+  text?: string;
+  pdfBase64?: string;
+  truncated: boolean;
+}
+
 export interface SummaryResult {
   thread: GeneratedThread;
-  inputMode: "pdf" | "abstract";
+  inputMode: InputMode;
   model: string;
   inputTokens: number;
   outputTokens: number;
+  costUsd: number | null;
 }
 
-export async function summarisePaper(paper: Paper): Promise<SummaryResult> {
-  const pdf = paper.pdfUrl ? await downloadPdf(paper.pdfUrl) : null;
-  const inputMode = pdf ? "pdf" : "abstract";
+export async function prepareMaterial(paper: Paper, config: SummaryConfig): Promise<Material> {
+  if (config.input === "pdf" && paper.pdfUrl) {
+    const bytes = await downloadPdf(paper.pdfUrl);
+    if (bytes) return { mode: "pdf", pdfBase64: Buffer.from(bytes).toString("base64"), truncated: false };
+  }
+  const full = await getFullText(paper);
+  if (full) return { mode: full.source, text: full.text, truncated: full.truncated };
+  return { mode: "abstract", truncated: false };
+}
 
-  const content: Anthropic.Beta.BetaContentBlockParam[] = [];
-  if (pdf) {
+/** Request body shared by the live and batch paths. */
+export function buildParams(paper: Paper, material: Material, config: SummaryConfig): Anthropic.MessageCreateParamsNonStreaming {
+  const content: Anthropic.ContentBlockParam[] = [];
+  if (material.pdfBase64) {
     content.push({
       type: "document",
-      source: { type: "base64", media_type: "application/pdf", data: pdf },
+      source: { type: "base64", media_type: "application/pdf", data: material.pdfBase64 },
       title: paper.title,
     });
   }
-  content.push({ type: "text", text: paperBrief(paper, inputMode) });
-
-  client ??= new Anthropic();
-  const stream = client.beta.messages.stream({
-    model: MODEL,
+  content.push({ type: "text", text: paperBrief(paper, material) });
+  const format = zodOutputFormat(ThreadSchema);
+  return {
+    model: config.model,
     max_tokens: 32000,
-    betas: ["server-side-fallback-2026-07-01"],
-    // On a safety-classifier decline, the API re-runs the request on its recommended fallback model.
-    fallbacks: "default",
-    output_config: { effort: EFFORT, format: betaZodOutputFormat(ThreadSchema) },
+    output_config: { effort: config.effort, format: { type: format.type, schema: format.schema } },
     system: SYSTEM_PROMPT,
     messages: [{ role: "user", content }],
+  };
+}
+
+/** Parse and validate a thread from a raw (e.g. batch) response. */
+export function parseThread(message: Anthropic.Message): GeneratedThread {
+  checkStop(message.stop_reason, message.stop_details);
+  const text = message.content.find((b) => b.type === "text")?.text;
+  if (!text) throw new Error("Response had no text");
+  return normalise(zodOutputFormat(ThreadSchema).parse(text));
+}
+
+export async function summarisePaper(paper: Paper, config: SummaryConfig = defaultConfig()): Promise<SummaryResult> {
+  const material = await prepareMaterial(paper, config);
+  const params = buildParams(paper, material, config);
+  const useFallback = FALLBACK_MODELS.includes(config.model);
+
+  const stream = anthropic().beta.messages.stream({
+    ...(params as Anthropic.Beta.MessageCreateParamsNonStreaming),
+    output_config: { effort: config.effort, format: betaZodOutputFormat(ThreadSchema) },
+    // On a safety-classifier decline, the API re-runs the request on its recommended fallback model.
+    ...(useFallback ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
   });
   const message = await stream.finalMessage().catch((err: unknown) => {
     if (err instanceof Error && err.message.includes("Could not resolve authentication method")) {
@@ -101,35 +211,45 @@ export async function summarisePaper(paper: Paper): Promise<SummaryResult> {
     throw err;
   });
 
-  if (message.stop_reason === "refusal") {
-    throw new Error(`Model declined to summarise (${message.stop_details?.category ?? "no category"})`);
-  }
-  if (message.stop_reason === "max_tokens") {
-    throw new Error("Summary was cut off at max_tokens");
-  }
-  if (!message.parsed_output) {
-    throw new Error("Model response did not match the thread schema");
-  }
-
+  checkStop(message.stop_reason, message.stop_details);
+  if (!message.parsed_output) throw new Error("Model response did not match the thread schema");
+  const inputTokens = totalInput(message.usage);
   return {
-    thread: message.parsed_output,
-    inputMode,
+    thread: normalise(message.parsed_output),
+    inputMode: material.mode,
     model: message.model,
-    inputTokens:
-      message.usage.input_tokens +
-      (message.usage.cache_read_input_tokens ?? 0) +
-      (message.usage.cache_creation_input_tokens ?? 0),
+    inputTokens,
     outputTokens: message.usage.output_tokens,
+    costUsd: costUsd({ model: message.model, inputTokens, outputTokens: message.usage.output_tokens }),
   };
 }
 
-function paperBrief(paper: Paper, inputMode: "pdf" | "abstract"): string {
+export function totalInput(usage: {
+  input_tokens: number;
+  cache_read_input_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+}): number {
+  return usage.input_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
+}
+
+function checkStop(stopReason: string | null, details?: { category?: string | null } | null) {
+  if (stopReason === "refusal") throw new Error(`Model declined to summarise (${details?.category ?? "no category"})`);
+  if (stopReason === "max_tokens") throw new Error("Summary was cut off at max_tokens");
+}
+
+function paperBrief(paper: Paper, material: Material): string {
   const authors =
-    paper.authors.length > 6 ? `${paper.authors.slice(0, 6).join(", ")} et al. (${paper.authors.length} authors)` : paper.authors.join(", ");
+    paper.authors.length > 6
+      ? `${paper.authors.slice(0, 6).join(", ")} et al. (${paper.authors.length} authors)`
+      : paper.authors.join(", ");
+  const intro: Record<InputMode, string> = {
+    pdf: "Write the thread for the attached paper.",
+    html: "Write the thread for the paper below. Its full text follows, converted from the arXiv HTML with maths as LaTeX between $ signs.",
+    "pdf-text": "Write the thread for the paper below. Its full text follows, extracted from the PDF, so layout and maths may be garbled in places.",
+    abstract: "The full text could not be retrieved. Write a short thread from the metadata and abstract below only.",
+  };
   const lines = [
-    inputMode === "pdf"
-      ? "Write the thread for the attached paper."
-      : "The full text could not be retrieved. Write a short thread from the metadata and abstract below only.",
+    intro[material.mode],
     "",
     `Title: ${paper.title}`,
     `Authors: ${authors}`,
@@ -137,24 +257,10 @@ function paperBrief(paper: Paper, inputMode: "pdf" | "abstract"): string {
     `Submitted: ${paper.publishedAt.toISOString().slice(0, 10)}`,
     `Link: ${paper.absUrl}`,
   ];
-  if (inputMode === "abstract") lines.push("", `Abstract: ${paper.abstract}`);
-  return lines.join("\n");
-}
-
-async function downloadPdf(url: string): Promise<string | null> {
-  try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": "reresearch/0.1 (personal research reader)" },
-      cache: "no-store",
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!res.ok) return null;
-    const type = res.headers.get("content-type") ?? "";
-    if (!type.includes("pdf")) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.byteLength > MAX_PDF_BYTES) return null;
-    return buf.toString("base64");
-  } catch {
-    return null;
+  if (material.mode === "abstract" || material.mode === "pdf-text") lines.push("", `Abstract: ${paper.abstract}`);
+  if (material.text) {
+    if (material.truncated) lines.push("", "Note: appendices and supplementary material were omitted for length.");
+    lines.push("", "<paper>", material.text, "</paper>");
   }
+  return lines.join("\n");
 }

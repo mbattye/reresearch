@@ -7,7 +7,7 @@ Starting focus: particle physics, quantum, and fusion energy. Any arXiv category
 ## How it works
 
 ```
-arXiv API ──► papers table ──► ranker ──► top N ──► Claude (full PDF) ──► threads table ──► feed
+arXiv API ──► papers table ──► ranker ──► top N ──► Claude (full text) ──► threads table ──► feed
    ▲              (scored on         ▲                                                    │
    │               keywords +        └──── likes / saves / "less like this" ◄─────────────┘
  daily cron        learned tags)            adjust tag affinities
@@ -15,8 +15,10 @@ arXiv API ──► papers table ──► ranker ──► top N ──► Clau
 
 - **Sources** (`src/lib/sources/`): arXiv for now. Recent submissions in your categories are fetched on each run, and you can add any paper by arXiv link.
 - **Ranking** (`src/lib/ranking.ts`): your keyword weights plus learned tag affinities matched against title (double weight) and abstract, then a four-day recency half-life at feed time. Every score keeps its reasons, which the Queue tab shows.
-- **Summaries** (`src/lib/summarise.ts`): the PDF goes to Claude (`claude-opus-5-5`, medium effort), which returns a structured thread (headline, hook, sectioned posts, TL;DR, key numbers, tags). The editorial voice lives in `SYSTEM_PROMPT` and is the main place to tune the writing. If the PDF can't be fetched it falls back to the abstract and says so.
-- **Feed**: For you (ranked), Latest, Saved, and Queue (papers fetched but not yet summarised, where you can summarise any on demand).
+- **Full text** (`src/lib/fulltext.ts`): arXiv's HTML version (sections, captions and maths as LaTeX, references dropped, appendices cut first when long), falling back to text extracted from the PDF, then to the abstract.
+- **Summaries** (`src/lib/summarise.ts`): Claude (Sonnet 5.5 by default, switchable in Settings) returns a structured thread: headline, hook, sectioned posts, TL;DR, key numbers, tags. The editorial voice lives in `SYSTEM_PROMPT` and is the main place to tune the writing.
+- **When threads get written**: the daily run writes your top few through the half-price Message Batches API. Anything else is written when you open it, from the Queue or a link.
+- **Feed**: For you (ranked), Latest, Saved, and Queue (fetched papers not yet written up).
 
 ## Run locally
 
@@ -37,7 +39,16 @@ Open http://localhost:3000 and press **Fetch new**. With `DATABASE_URL` unset it
 
 ## Costs
 
-Each summary reads the full PDF with Claude Opus 5.5 ($4 per million input tokens, $20 per million output). A typical 15 to 30 page paper costs roughly $0.10 to $0.30. The default is 4 papers per run, set in Settings. `SUMMARY_MODEL` and `SUMMARY_EFFORT` override the model and effort.
+Measured on five recent physics papers (about 23k tokens of text each):
+
+| Setup | Per paper | Batched (daily run) |
+| --- | --- | --- |
+| Claude Haiku 5.5, text | $0.004 | $0.002 |
+| **Claude Sonnet 5.5, text (default)** | **$0.064** | **$0.032** |
+| Claude Opus 5.5, text | $0.138 | $0.069 |
+| Claude Opus 5.5, full PDF (the original setup) | $0.313 | $0.156 |
+
+Settings shows spend this month, and each thread shows what it cost. The model and the full-PDF option are in Settings; `SUMMARY_MODEL`, `SUMMARY_EFFORT`, `SUMMARY_INPUT` and `SUMMARY_BATCH` set the defaults.
 
 ## Scripts
 

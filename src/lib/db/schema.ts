@@ -12,6 +12,7 @@ import {
 export type PaperStatus =
   | "new" // fetched, not yet chosen for summarising
   | "summarising"
+  | "batched" // submitted to a half-price Message Batch, waiting for results
   | "ready"
   | "failed";
 
@@ -79,11 +80,13 @@ export const threads = pgTable("threads", {
   tags: jsonb("tags").$type<string[]>().notNull(),
   level: text("level").notNull(),
   paperType: text("paper_type").notNull(),
-  // "pdf" when Claude read the full paper, "abstract" when it only had the abstract
+  // What the model read: "html" / "pdf-text" (extracted full text), "pdf" (the PDF itself) or "abstract"
   inputMode: text("input_mode").notNull(),
   model: text("model").notNull(),
   inputTokens: integer("input_tokens"),
   outputTokens: integer("output_tokens"),
+  costUsd: real("cost_usd"),
+  batched: boolean("batched").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -109,6 +112,9 @@ export const preferences = pgTable("preferences", {
   categories: jsonb("categories").$type<string[]>().notNull(),
   keywords: jsonb("keywords").$type<Keyword[]>().notNull(),
   summariesPerRun: integer("summaries_per_run").notNull(),
+  // Null means use the SUMMARY_* environment defaults.
+  summaryModel: text("summary_model"),
+  summaryInput: text("summary_input").$type<"text" | "pdf">(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -117,6 +123,18 @@ export const termAffinity = pgTable("term_affinity", {
   term: text("term").primaryKey(),
   weight: real("weight").notNull().default(0),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// One row per submitted Message Batch, so results can be collected on a later request.
+export const summaryBatches = pgTable("summary_batches", {
+  id: text("id").primaryKey(),
+  paperIds: jsonb("paper_ids").$type<string[]>().notNull(),
+  model: text("model").notNull(),
+  // Material mode per paper id, needed to record how each thread was written.
+  inputModes: jsonb("input_modes").$type<Record<string, string>>().notNull(),
+  status: text("status").$type<"pending" | "collected">().notNull().default("pending"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  collectedAt: timestamp("collected_at", { withTimezone: true }),
 });
 
 export type Paper = typeof papers.$inferSelect;

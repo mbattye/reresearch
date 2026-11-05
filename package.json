@@ -18,10 +18,12 @@
     "drizzle-orm": "^0.45.4",
     "fast-xml-parser": "^5.12.0",
     "next": "16.4.5",
+    "node-html-parser": "^9.0.6",
     "postgres": "^3.4.9",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "server-only": "^0.0.1",
+    "unpdf": "^2.1.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {

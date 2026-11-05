@@ -6,8 +6,12 @@ import { ActionBar } from "@/components/ActionBar";
 import { Avatar } from "@/components/Avatar";
 import { BackIcon } from "@/components/icons";
 import { MarkRead } from "@/components/MarkRead";
-import { getThread } from "@/lib/feed";
+import { AutoRefresh } from "@/components/AutoRefresh";
+import { WriteOnOpen } from "@/components/WriteOnOpen";
+import type { Paper } from "@/lib/db/schema";
+import { getPaperView } from "@/lib/feed";
 import { SECTION_LABELS, authorLine } from "@/lib/format";
+import { formatUsd } from "@/lib/pricing";
 import { CATEGORY_LABELS, categoryShort } from "@/lib/topics";
 
 export default function ThreadPage({ params }: PageProps<"/p/[id]">) {
@@ -32,10 +36,11 @@ function TopBar() {
 async function Thread({ params }: Pick<PageProps<"/p/[id]">, "params">) {
   await connection();
   const { id } = await params;
-  const item = await getThread(decodeURIComponent(id));
+  const item = await getPaperView(decodeURIComponent(id));
   if (!item) notFound();
   const { paper, thread, interaction } = item;
-  const date = paper.publishedAt.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+  if (!thread) return <PendingThread paper={paper} />;
+  const date = formatDate(paper.publishedAt);
 
   const posts = [{ section: null, text: thread.hook }, ...thread.posts];
 
@@ -120,21 +125,73 @@ async function Thread({ params }: Pick<PageProps<"/p/[id]">, "params">) {
             <summary className="cursor-pointer text-accent">Original abstract</summary>
             <p className="mt-2 leading-relaxed text-muted">{paper.abstract}</p>
           </details>
-          <div className="mt-4 flex gap-2 text-[14px]">
-            {paper.pdfUrl && (
-              <a href={paper.pdfUrl} target="_blank" rel="noreferrer" className="rounded-full bg-fg px-4 py-1.5 font-semibold text-bg">
-                Read the PDF
-              </a>
-            )}
-            <a href={paper.absUrl} target="_blank" rel="noreferrer" className="rounded-full border border-line px-4 py-1.5 font-semibold">
-              arXiv page
-            </a>
-          </div>
+          <PaperLinks paper={paper} />
           <p className="mt-4 text-[12px] text-muted">
-            Written by {thread.model} from the {thread.inputMode === "pdf" ? "full paper" : "abstract only"}. Check the paper before citing anything.
+            Written by {thread.model} from the {INPUT_LABELS[thread.inputMode] ?? thread.inputMode}
+            {thread.costUsd != null && ` for ${formatUsd(thread.costUsd)}${thread.batched ? " (batched)" : ""}`}. Check
+            the paper before citing anything.
           </p>
         </section>
       </main>
     </>
+  );
+}
+
+const INPUT_LABELS: Record<string, string> = {
+  html: "full text",
+  "pdf-text": "full text (from PDF)",
+  pdf: "full PDF",
+  abstract: "abstract only",
+};
+
+function formatDate(d: Date) {
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+}
+
+/** A paper that hasn't been written up yet: show what we have and write the thread now. */
+function PendingThread({ paper }: { paper: Paper }) {
+  return (
+    <>
+      <TopBar />
+      <AutoRefresh active ms={5000} />
+      {(paper.status === "new" || paper.status === "failed") && <WriteOnOpen paperId={paper.id} />}
+      <main className="px-4 pt-3">
+        <div className="flex items-center gap-3">
+          <Avatar category={paper.primaryCategory} size={44} />
+          <div className="min-w-0 text-[14px] leading-5">
+            <div className="truncate font-semibold">{authorLine(paper.authors)}</div>
+            <div className="truncate text-muted">
+              {CATEGORY_LABELS[paper.primaryCategory ?? ""] ?? categoryShort(paper.primaryCategory)} ·{" "}
+              {formatDate(paper.publishedAt)}
+            </div>
+          </div>
+        </div>
+        <h1 className="mt-3 text-[19px] leading-tight font-bold">{paper.title}</h1>
+        <div className="mt-4 rounded-xl bg-accent-soft px-3 py-2.5 text-[14px] text-accent">
+          {paper.status === "batched"
+            ? "This one is in the half-price overnight batch. It'll appear here as soon as it's ready."
+            : paper.status !== "failed"
+              ? "Writing the thread. This usually takes under a minute; the page updates itself."
+              : `Last attempt failed: ${paper.error ?? "unknown error"}. Retrying.`}
+        </div>
+        <p className="mt-4 text-[14px] leading-relaxed text-muted">{paper.abstract}</p>
+        <PaperLinks paper={paper} />
+      </main>
+    </>
+  );
+}
+
+function PaperLinks({ paper }: { paper: Paper }) {
+  return (
+    <div className="mt-4 flex gap-2 text-[14px]">
+      {paper.pdfUrl && (
+        <a href={paper.pdfUrl} target="_blank" rel="noreferrer" className="rounded-full bg-fg px-4 py-1.5 font-semibold text-bg">
+          Read the PDF
+        </a>
+      )}
+      <a href={paper.absUrl} target="_blank" rel="noreferrer" className="rounded-full border border-line px-4 py-1.5 font-semibold">
+        arXiv page
+      </a>
+    </div>
   );
 }

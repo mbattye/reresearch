@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { BatchCollector } from "@/components/BatchCollector";
 import { Header } from "@/components/Header";
 import { PostCard } from "@/components/PostCard";
 import { QueueList } from "@/components/QueueList";
@@ -31,6 +32,7 @@ async function HomeContent({ searchParams }: Pick<PageProps<"/">, "searchParams"
     <>
       <Header tab={tab} />
       <AutoRefresh active={summarising || tab === "queue"} />
+      <BatchCollector active={(counts.batched ?? 0) > 0} />
       {summarising && tab !== "queue" && (
         <Link href="/?tab=queue" className="block border-b border-line bg-accent-soft px-4 py-2 text-[13px] text-accent">
           Summarising {counts.summarising} paper{counts.summarising === 1 ? "" : "s"}…
