@@ -14,6 +14,17 @@ export function authorLine(authors: string[]): string {
   return `${authors[0]} et al.`;
 }
 
+/** Byline for cards: the collaboration for big-team papers, otherwise the lead author. */
+export function creditLine(p: { authors: string[]; collaboration: string | null }): string {
+  return p.collaboration ?? authorLine(p.authors);
+}
+
+/** "UKAEA" or "University of Oxford + 3 more". */
+export function institutionLine(institutions: string[]): string | null {
+  if (!institutions.length) return null;
+  return institutions.length > 1 ? `${institutions[0]} + ${institutions.length - 1} more` : institutions[0];
+}
+
 export const SECTION_LABELS: Record<string, string> = {
   context: "Context",
   approach: "Method",

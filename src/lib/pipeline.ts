@@ -1,6 +1,8 @@
 import "server-only";
 import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb, schema } from "./db";
+import { getSpend } from "./feed";
+import { inspireDetails } from "./sources/metadata";
 import type { NewPaper, Paper, Preferences } from "./db/schema";
 import { diversify, interestScore } from "./ranking";
 import { fetchByIds, fetchRecent, parseArxivId } from "./sources/arxiv";
@@ -54,7 +56,49 @@ export async function getSummaryConfig(): Promise<SummaryConfig> {
     ...base,
     model: prefs.summaryModel ?? base.model,
     input: prefs.summaryInput ?? base.input,
+    effort: prefs.summaryEffort ?? base.effort,
   };
+}
+
+export function monthlyBudget(prefs: Preferences): number {
+  return prefs.monthlyBudgetUsd ?? (Number(process.env.MONTHLY_BUDGET_USD) || 10);
+}
+
+/** Refuse to spend more once this month's summaries have used up the budget. */
+async function assertWithinBudget() {
+  const prefs = await getPreferences();
+  const budget = monthlyBudget(prefs);
+  const { month } = await getSpend();
+  if (month >= budget) {
+    throw new Error(`Monthly budget of $${budget.toFixed(2)} reached ($${month.toFixed(2)} spent). Raise it in Settings.`);
+  }
+}
+
+/**
+ * Fill in institutions, collaboration, licence (and DOI/journal if missing) just before a paper is
+ * written up, so it can be credited properly. Best effort: a failed lookup never blocks a summary.
+ */
+async function enrich(paper: Paper): Promise<Paper> {
+  if (paper.source !== "arxiv" || paper.institutions.length) return paper;
+  const details = await inspireDetails(paper.externalId).catch(() => null);
+  if (!details) return paper;
+  const patch = {
+    institutions: details.institutions,
+    collaboration: details.collaboration ?? paper.collaboration,
+    license: details.license ?? paper.license,
+    licenseUrl: details.licenseUrl ?? paper.licenseUrl,
+    doi: paper.doi ?? details.doi ?? null,
+    venue: paper.venue ?? details.venue ?? null,
+  };
+  const db = await getDb();
+  await db.update(papers).set(patch).where(eq(papers.id, paper.id));
+  return { ...paper, ...patch };
+}
+
+async function saveInstitutions(paper: Paper, found: string[] | undefined) {
+  if (paper.institutions.length || !found?.length) return;
+  const db = await getDb();
+  await db.update(papers).set({ institutions: found }).where(eq(papers.id, paper.id));
 }
 
 export async function getAffinity(): Promise<Map<string, number>> {
@@ -135,11 +179,14 @@ export async function submitBatch(list: Paper[]): Promise<string | undefined> {
   if (toSend.length === 0) return undefined;
 
   try {
+    await assertWithinBudget();
     const config = await getSummaryConfig();
     const inputModes: Record<string, string> = {};
     const requests = [];
-    for (const p of toSend) {
+    for (const raw of toSend) {
+      const p = await enrich(raw);
       const material = await prepareMaterial(p, config);
+      await saveInstitutions(p, material.institutions);
       inputModes[p.id] = material.mode;
       // custom_id allows only [a-zA-Z0-9_-]; map back via the stored paper list.
       requests.push({ custom_id: `p${requests.length}`, params: buildParams(p, material, config) });
@@ -279,6 +326,9 @@ export async function resolveCandidates(list: Candidate[]): Promise<NewPaper[]> 
       foundVia: c.foundVia,
       boost: c.boost,
       boostReasons: c.boostReasons,
+      institutions: c.institutions ?? [],
+      license: c.license ?? null,
+      licenseUrl: c.licenseUrl ?? null,
     });
   }
 
@@ -396,7 +446,11 @@ async function summariseOne(paper: Paper, config: SummaryConfig) {
   if (claimed.length === 0) return;
 
   try {
-    await saveThread(paper.id, await summarisePaper(paper, config), false);
+    await assertWithinBudget();
+    const enriched = await enrich(paper);
+    const result = await summarisePaper(enriched, config);
+    await saveInstitutions(enriched, result.institutions);
+    await saveThread(paper.id, result, false);
   } catch (err) {
     await markFailed(paper.id, err instanceof Error ? err.message : String(err));
     throw err;

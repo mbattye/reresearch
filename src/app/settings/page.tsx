@@ -4,7 +4,7 @@ import { connection } from "next/server";
 import { AddPaperForm } from "@/components/AddPaperForm";
 import { BackIcon } from "@/components/icons";
 import { getSpend, getTopAffinities } from "@/lib/feed";
-import { getPreferences, getSummaryConfig } from "@/lib/pipeline";
+import { getPreferences, getSummaryConfig, monthlyBudget } from "@/lib/pipeline";
 import { formatUsd } from "@/lib/pricing";
 import { CATEGORY_LABELS, SUMMARY_MODELS } from "@/lib/topics";
 import { runIngest, savePreferences } from "../actions";
@@ -27,6 +27,12 @@ export default function SettingsPage() {
   );
 }
 
+const EFFORT_OPTIONS = [
+  { id: "low", label: "Quick", note: "Fastest, cheapest; fine for skimming" },
+  { id: "medium", label: "Balanced", note: "Default; what the costs assume" },
+  { id: "high", label: "Thorough", note: "More careful reading; costs a little more" },
+] as const;
+
 const sectionTitle = "text-[15px] font-semibold";
 const hint = "mt-0.5 text-[13px] text-muted";
 
@@ -38,6 +44,7 @@ async function Settings() {
     getSummaryConfig(),
     getSpend(),
   ]);
+  const budget = monthlyBudget(prefs);
   const extra = prefs.categories.filter((c) => !(c in CATEGORY_LABELS));
 
   return (
@@ -161,6 +168,29 @@ async function Settings() {
               </label>
             ))}
           </div>
+          <fieldset className="mt-4">
+            <legend className="text-[14px] font-medium">Effort</legend>
+            <div className="mt-1 grid grid-cols-3 gap-2">
+              {EFFORT_OPTIONS.map((e) => (
+                <label
+                  key={e.id}
+                  className="flex cursor-pointer flex-col rounded-lg border border-line px-2.5 py-2 text-[13.5px] has-[:checked]:border-accent has-[:checked]:bg-accent-soft"
+                >
+                  <span className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="summaryEffort"
+                      value={e.id}
+                      defaultChecked={config.effort === e.id}
+                      className="size-3.5 accent-[var(--accent)]"
+                    />
+                    {e.label}
+                  </span>
+                  <span className="mt-0.5 text-[12px] leading-snug text-muted">{e.note}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
           <label className="mt-3 flex items-start gap-3 px-1 text-[14px]">
             <input
               type="checkbox"
@@ -174,6 +204,23 @@ async function Settings() {
               <span className="block text-[12.5px] text-muted">About 3× the cost. Off reads the extracted text.</span>
             </span>
           </label>
+          <label className="mt-4 flex items-center justify-between text-[14px]">
+            <span>
+              Monthly budget
+              <span className="block text-[12.5px] text-muted">Writing stops for the month once this is spent.</span>
+            </span>
+            <span className="flex items-center gap-1">
+              $
+              <input
+                type="number"
+                name="monthlyBudgetUsd"
+                min={0}
+                step={1}
+                defaultValue={budget}
+                className="w-20 rounded-lg border border-line bg-bg px-3 py-1.5 text-right"
+              />
+            </span>
+          </label>
           <button className="mt-4 w-full rounded-full bg-fg py-2 text-[14px] font-semibold text-bg hover:opacity-90">
             Save
           </button>
@@ -183,7 +230,8 @@ async function Settings() {
       <section className="px-4 py-4">
         <h2 className={sectionTitle}>Spend</h2>
         <p className="mt-1 text-[14px]">
-          {formatUsd(spend.month)} this month across {spend.monthCount} thread{spend.monthCount === 1 ? "" : "s"}
+          {formatUsd(spend.month)} of {formatUsd(budget)} this month across {spend.monthCount} thread
+          {spend.monthCount === 1 ? "" : "s"}
           {spend.count > 0 && <span className="text-muted"> · {formatUsd(spend.total / spend.count)} average</span>}
         </p>
         <p className={hint}>Estimated from token usage at list prices.</p>

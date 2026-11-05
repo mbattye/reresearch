@@ -1,4 +1,5 @@
 import { parseArxivId } from "./arxiv";
+import { uniqueInstitutions } from "./metadata";
 import { fetchJson, HttpError, normaliseDoi, type Candidate } from "./types";
 
 // Free without a key (about 1,000 lookups a day); OPENALEX_API_KEY raises the allowance.
@@ -9,10 +10,10 @@ interface Work {
   title: string | null;
   publication_date: string | null;
   cited_by_count: number;
-  authorships: { author: { display_name: string } }[];
+  authorships: { author: { display_name: string }; institutions: { display_name: string }[]; raw_affiliation_strings?: string[] }[];
   abstract_inverted_index: Record<string, number[]> | null;
   primary_location: { source: { display_name: string } | null; landing_page_url: string | null } | null;
-  best_oa_location: { pdf_url: string | null; landing_page_url: string | null } | null;
+  best_oa_location: { pdf_url: string | null; landing_page_url: string | null; license: string | null } | null;
   locations: { landing_page_url: string | null; pdf_url: string | null }[];
 }
 
@@ -51,6 +52,8 @@ export async function lookupDoi(doi: string): Promise<Candidate | null> {
     foundVia: "openalex",
     boost: 0,
     boostReasons: [],
+    institutions: uniqueInstitutions(w.authorships.flatMap((a) => a.institutions.map((i) => i.display_name))),
+    license: w.best_oa_location?.license ? w.best_oa_location.license.toUpperCase().replace(/^CC-/, "CC ") : undefined,
   };
 }
 

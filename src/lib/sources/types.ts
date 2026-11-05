@@ -21,6 +21,9 @@ export interface Candidate {
   foundVia: FoundVia;
   boost: number;
   boostReasons: ScoreReason[];
+  institutions?: string[];
+  license?: string;
+  licenseUrl?: string;
 }
 
 export function normaliseDoi(doi: string): string {
@@ -58,6 +61,9 @@ export function doiCandidateToPaper(c: Candidate): NewPaper | null {
     foundVia: c.foundVia,
     boost: c.boost,
     boostReasons: c.boostReasons,
+    institutions: c.institutions ?? [],
+    license: c.license ?? null,
+    licenseUrl: c.licenseUrl ?? null,
   };
 }
 

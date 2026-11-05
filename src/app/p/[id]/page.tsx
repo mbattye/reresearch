@@ -10,7 +10,9 @@ import { AutoRefresh } from "@/components/AutoRefresh";
 import { WriteOnOpen } from "@/components/WriteOnOpen";
 import type { Paper } from "@/lib/db/schema";
 import { getPaperView } from "@/lib/feed";
-import { SECTION_LABELS, authorLine } from "@/lib/format";
+import { CopyButton } from "@/components/CopyButton";
+import { formatBibtex, formatCitation } from "@/lib/citation";
+import { SECTION_LABELS, creditLine } from "@/lib/format";
 import { formatUsd } from "@/lib/pricing";
 import { CATEGORY_LABELS, categoryShort } from "@/lib/topics";
 
@@ -53,7 +55,7 @@ async function Thread({ params }: Pick<PageProps<"/p/[id]">, "params">) {
           <div className="flex items-center gap-3">
             <Avatar category={paper.primaryCategory} size={44} />
             <div className="min-w-0 text-[14px] leading-5">
-              <div className="truncate font-semibold">{authorLine(paper.authors)}</div>
+              <div className="truncate font-semibold">{creditLine(paper)}</div>
               <div className="truncate text-muted">
                 {fieldLabel(paper)} · {date}
               </div>
@@ -119,8 +121,7 @@ async function Thread({ params }: Pick<PageProps<"/p/[id]">, "params">) {
         </div>
 
         <section className="px-4 py-4">
-          <h2 className="text-[15px] leading-snug font-semibold">{paper.title}</h2>
-          <p className="mt-1 text-[13px] text-muted">{paper.authors.join(", ")}</p>
+          <Credits paper={paper} />
           <details className="mt-3 text-[14px]">
             <summary className="cursor-pointer text-accent">Original abstract</summary>
             <p className="mt-2 leading-relaxed text-muted">{paper.abstract}</p>
@@ -164,7 +165,7 @@ function PendingThread({ paper }: { paper: Paper }) {
         <div className="flex items-center gap-3">
           <Avatar category={paper.primaryCategory} size={44} />
           <div className="min-w-0 text-[14px] leading-5">
-            <div className="truncate font-semibold">{authorLine(paper.authors)}</div>
+            <div className="truncate font-semibold">{creditLine(paper)}</div>
             <div className="truncate text-muted">
               {fieldLabel(paper)} ·{" "}
               {formatDate(paper.publishedAt)}
@@ -183,6 +184,92 @@ function PendingThread({ paper }: { paper: Paper }) {
         <PaperLinks paper={paper} />
       </main>
     </>
+  );
+}
+
+/** Who did the work, where, and how to cite it. */
+function Credits({ paper }: { paper: Paper }) {
+  const many = paper.authors.length > 12;
+  const citation = formatCitation(paper);
+  return (
+    <div className="grid gap-3">
+      <div>
+        <div className="text-[11.5px] font-semibold tracking-wider text-muted uppercase">Original paper</div>
+        <h2 className="mt-0.5 text-[15px] leading-snug font-semibold">{paper.title}</h2>
+      </div>
+      <div className="text-[13.5px] leading-relaxed">
+        {paper.collaboration && <div className="font-medium">{paper.collaboration}</div>}
+        {many ? (
+          <details>
+            <summary className="cursor-pointer text-muted">
+              {paper.authors.slice(0, 6).join(", ")} and {paper.authors.length - 6} more
+            </summary>
+            <p className="mt-1 text-muted">{paper.authors.join(", ")}</p>
+          </details>
+        ) : (
+          <p className="text-muted">{paper.authors.join(", ")}</p>
+        )}
+      </div>
+      {paper.institutions.length > 0 && (
+        <div className="text-[13.5px] leading-relaxed">
+          <div className="text-[11.5px] font-semibold tracking-wider text-muted uppercase">Institutions</div>
+          <p className="mt-0.5">
+            {paper.institutions.slice(0, 10).join(" · ")}
+            {paper.institutions.length > 10 && <span className="text-muted"> · and {paper.institutions.length - 10} more</span>}
+          </p>
+        </div>
+      )}
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-[13px]">
+        {paper.venue && (
+          <>
+            <dt className="text-muted">Published in</dt>
+            <dd>{paper.venue}</dd>
+          </>
+        )}
+        {paper.source === "arxiv" && (
+          <>
+            <dt className="text-muted">arXiv</dt>
+            <dd>
+              <a href={paper.absUrl} target="_blank" rel="noreferrer" className="text-accent">
+                {paper.externalId}
+              </a>
+            </dd>
+          </>
+        )}
+        {paper.doi && (
+          <>
+            <dt className="text-muted">DOI</dt>
+            <dd className="truncate">
+              <a href={`https://doi.org/${paper.doi}`} target="_blank" rel="noreferrer" className="text-accent">
+                {paper.doi}
+              </a>
+            </dd>
+          </>
+        )}
+        {paper.license && (
+          <>
+            <dt className="text-muted">Licence</dt>
+            <dd>
+              {paper.licenseUrl ? (
+                <a href={paper.licenseUrl} target="_blank" rel="noreferrer" className="text-accent">
+                  {paper.license}
+                </a>
+              ) : (
+                paper.license
+              )}
+            </dd>
+          </>
+        )}
+      </dl>
+      <div className="rounded-xl bg-raised p-3">
+        <div className="text-[11.5px] font-semibold tracking-wider text-muted uppercase">Cite as</div>
+        <p className="mt-1 text-[13px] leading-relaxed select-all">{citation}</p>
+        <div className="mt-2 flex gap-2">
+          <CopyButton text={citation} label="Copy citation" />
+          <CopyButton text={formatBibtex(paper)} label="Copy BibTeX" />
+        </div>
+      </div>
+    </div>
   );
 }
 

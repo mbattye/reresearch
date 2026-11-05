@@ -16,10 +16,13 @@ export interface SummaryConfig {
   input: "text" | "pdf";
 }
 
+export const EFFORTS: Effort[] = ["low", "medium", "high"];
+
 export function defaultConfig(): SummaryConfig {
+  const effort = process.env.SUMMARY_EFFORT as Effort | undefined;
   return {
     model: process.env.SUMMARY_MODEL ?? "claude-sonnet-5-5",
-    effort: (process.env.SUMMARY_EFFORT as Effort | undefined) ?? "medium",
+    effort: effort && EFFORTS.includes(effort) ? effort : "medium",
     input: process.env.SUMMARY_INPUT === "pdf" ? "pdf" : "text",
   };
 }
@@ -143,6 +146,7 @@ export interface Material {
   text?: string;
   pdfBase64?: string;
   truncated: boolean;
+  institutions?: string[];
 }
 
 export interface SummaryResult {
@@ -152,6 +156,8 @@ export interface SummaryResult {
   inputTokens: number;
   outputTokens: number;
   costUsd: number | null;
+  /** Affiliations found in the full text, when it had any. */
+  institutions?: string[];
 }
 
 export async function prepareMaterial(paper: Paper, config: SummaryConfig): Promise<Material> {
@@ -160,7 +166,7 @@ export async function prepareMaterial(paper: Paper, config: SummaryConfig): Prom
     if (bytes) return { mode: "pdf", pdfBase64: Buffer.from(bytes).toString("base64"), truncated: false };
   }
   const full = await getFullText(paper);
-  if (full) return { mode: full.source, text: full.text, truncated: full.truncated };
+  if (full) return { mode: full.source, text: full.text, truncated: full.truncated, institutions: full.institutions };
   return { mode: "abstract", truncated: false };
 }
 
@@ -221,6 +227,7 @@ export async function summarisePaper(paper: Paper, config: SummaryConfig = defau
     inputTokens,
     outputTokens: message.usage.output_tokens,
     costUsd: costUsd({ model: message.model, inputTokens, outputTokens: message.usage.output_tokens }),
+    institutions: material.institutions,
   };
 }
 
@@ -255,6 +262,8 @@ function paperBrief(paper: Paper, material: Material): string {
     `Authors: ${authors}`,
     paper.categories.length ? `Categories: ${paper.categories.join(", ")}` : null,
     paper.venue ? `Published in: ${paper.venue}` : null,
+    paper.collaboration ? `Collaboration: ${paper.collaboration}` : null,
+    paper.institutions.length ? `Institutions: ${paper.institutions.slice(0, 8).join("; ")}` : null,
     `Submitted: ${paper.publishedAt.toISOString().slice(0, 10)}`,
     `Link: ${paper.absUrl}`,
   ];

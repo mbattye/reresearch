@@ -65,6 +65,11 @@ export const papers = pgTable(
     scoreReasons: jsonb("score_reasons").$type<ScoreReason[]>().notNull().default([]),
     boost: real("boost").notNull().default(0),
     boostReasons: jsonb("boost_reasons").$type<ScoreReason[]>().notNull().default([]),
+    // Filled in when a paper is written up (INSPIRE, then the arXiv HTML, or OpenAlex for DOIs).
+    institutions: jsonb("institutions").$type<string[]>().notNull().default([]),
+    collaboration: text("collaboration"),
+    license: text("license"),
+    licenseUrl: text("license_url"),
     // true when the reader asked for this paper explicitly rather than the ranker picking it
     requested: boolean("requested").notNull().default(false),
     status: text("status").$type<PaperStatus>().notNull().default("new"),
@@ -131,6 +136,9 @@ export const preferences = pgTable("preferences", {
   // Null means use the SUMMARY_* environment defaults.
   summaryModel: text("summary_model"),
   summaryInput: text("summary_input").$type<"text" | "pdf">(),
+  summaryEffort: text("summary_effort").$type<"low" | "medium" | "high">(),
+  // Summaries stop for the rest of the month once this much has been spent. Null = MONTHLY_BUDGET_USD or $10.
+  monthlyBudgetUsd: real("monthly_budget_usd"),
   sources: jsonb("sources")
     .$type<SourceToggles>()
     .notNull()
@@ -156,6 +164,17 @@ export const summaryBatches = pgTable("summary_batches", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   collectedAt: timestamp("collected_at", { withTimezone: true }),
 });
+
+// Failed sign-ins, for throttling password guessing.
+export const authFailures = pgTable(
+  "auth_failures",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    ip: text("ip").notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("auth_failures_at_idx").on(t.at)],
+);
 
 export type Paper = typeof papers.$inferSelect;
 export type NewPaper = typeof papers.$inferInsert;

@@ -1,7 +1,7 @@
 import { parse, type HTMLElement } from "node-html-parser";
 import type { Paper } from "./db/schema";
-
-const USER_AGENT = "reresearch/0.1 (personal research reader)";
+import { safeFetch } from "./safe-fetch";
+import { uniqueInstitutions } from "./sources/metadata";
 // Roughly 20k tokens. Longer papers keep their main text and lose appendices and supplements first.
 const MAX_CHARS = 80_000;
 // Headings that start back matter LaTeXML doesn't tag as an appendix ("Appendix A", "Supplementary
@@ -17,6 +17,8 @@ export interface FullText {
   text: string;
   /** True when appendices or trailing sections were dropped to fit MAX_CHARS. */
   truncated: boolean;
+  /** Author affiliations listed in the HTML, lead author's first. */
+  institutions?: string[];
 }
 
 /**
@@ -38,11 +40,7 @@ export async function getFullText(paper: Paper): Promise<FullText | null> {
 
 export async function downloadPdf(url: string): Promise<Uint8Array | null> {
   try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": USER_AGENT },
-      cache: "no-store",
-      signal: AbortSignal.timeout(30_000),
-    });
+    const res = await safeFetch(url);
     if (!res.ok || !(res.headers.get("content-type") ?? "").includes("pdf")) return null;
     const buf = new Uint8Array(await res.arrayBuffer());
     return buf.byteLength > MAX_PDF_BYTES ? null : buf;
@@ -53,11 +51,7 @@ export async function downloadPdf(url: string): Promise<Uint8Array | null> {
 
 async function fetchArxivHtml(arxivId: string): Promise<FullText | null> {
   try {
-    const res = await fetch(`https://arxiv.org/html/${arxivId}`, {
-      headers: { "User-Agent": USER_AGENT },
-      cache: "no-store",
-      signal: AbortSignal.timeout(30_000),
-    });
+    const res = await safeFetch(`https://arxiv.org/html/${arxivId}`);
     if (!res.ok) return null;
     return latexmlToText(await res.text());
   } catch {
@@ -70,6 +64,12 @@ export function latexmlToText(html: string): FullText | null {
   const root = parse(html, { blockTextElements: { script: false, style: false, noscript: false } });
   const article = root.querySelector("article.ltx_document") ?? root.querySelector("article");
   if (!article) return null;
+
+  const institutions = uniqueInstitutions(
+    article.querySelectorAll(".ltx_role_affiliation, .ltx_role_address").map((el) =>
+      squash(el.text).replace(/^Affiliation:\s*/i, ""),
+    ),
+  );
 
   for (const sel of [
     "nav",
@@ -130,7 +130,7 @@ export function latexmlToText(html: string): FullText | null {
     text = text.slice(0, MAX_CHARS);
     truncated = true;
   }
-  return { source: "html", text, truncated };
+  return { source: "html", text, truncated, institutions };
 }
 
 async function pdfToText(bytes: Uint8Array): Promise<FullText | null> {

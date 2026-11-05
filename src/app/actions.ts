@@ -1,11 +1,11 @@
 "use server";
 
-import { eq } from "drizzle-orm";
-import { cookies } from "next/headers";
+import { eq, gt, lt, sql } from "drizzle-orm";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
 import { after } from "next/server";
-import { SESSION_COOKIE, authEnabled, safeEqual, sessionToken } from "@/lib/auth";
+import { SESSION_COOKIE, SESSION_MAX_AGE_S, authEnabled, createSessionToken, safeEqual } from "@/lib/auth";
 import { getDb, schema } from "@/lib/db";
 import type { Keyword } from "@/lib/db/schema";
 import { markRead, setFlag } from "@/lib/feed";
@@ -34,7 +34,7 @@ export type AddPaperState = { ok: boolean; message: string } | null;
 
 export async function addPapers(_prev: AddPaperState, formData: FormData): Promise<AddPaperState> {
   const raw = String(formData.get("papers") ?? "");
-  const inputs = raw.split(/[\s,]+/).filter(Boolean);
+  const inputs = raw.split(/[\s,]+/).filter(Boolean).slice(0, 10);
   try {
     const ids = await requestPapers(inputs);
     after(async () => {
@@ -82,6 +82,8 @@ export async function savePreferences(formData: FormData) {
   const summariesPerRun = Math.min(20, Math.max(1, Number(formData.get("summariesPerRun")) || 4));
   const model = String(formData.get("summaryModel") ?? "");
   const input = formData.get("summaryInput") === "pdf" ? "pdf" : "text";
+  const effort = String(formData.get("summaryEffort") ?? "");
+  const budget = Number(formData.get("monthlyBudgetUsd"));
 
   await getPreferences();
   const db = await getDb();
@@ -93,6 +95,8 @@ export async function savePreferences(formData: FormData) {
       summariesPerRun,
       summaryModel: SUMMARY_MODELS.some((m) => m.id === model) ? model : null,
       summaryInput: input,
+      summaryEffort: effort === "low" || effort === "medium" || effort === "high" ? effort : null,
+      monthlyBudgetUsd: Number.isFinite(budget) && budget >= 0 ? Math.min(budget, 1000) : null,
       sources: {
         inspireTrending: formData.get("inspireTrending") === "on",
         recommendations: formData.get("recommendations") === "on",
@@ -103,16 +107,48 @@ export async function savePreferences(formData: FormData) {
   refresh();
 }
 
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const MAX_FAILURES_PER_IP = 8;
+const MAX_FAILURES_TOTAL = 40;
+
 export async function login(_prev: string | null, formData: FormData): Promise<string | null> {
   if (!authEnabled()) redirect("/");
+  const ip = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const db = await getDb();
+  const { authFailures } = schema;
+  const since = new Date(Date.now() - LOGIN_WINDOW_MS);
+  const [counts] = await db
+    .select({
+      ip: sql<number>`count(*) filter (where ${authFailures.ip} = ${ip})::int`,
+      total: sql<number>`count(*)::int`,
+    })
+    .from(authFailures)
+    .where(gt(authFailures.at, since));
+  if (counts.ip >= MAX_FAILURES_PER_IP || counts.total >= MAX_FAILURES_TOTAL) {
+    return "Too many attempts. Try again in 15 minutes.";
+  }
+
   const password = String(formData.get("password") ?? "");
-  if (!safeEqual(password, process.env.APP_PASSWORD ?? "")) return "Wrong password";
-  (await cookies()).set(SESSION_COOKIE, await sessionToken(), {
+  // Compare digests so the check takes the same time whatever the password's length.
+  if (!safeEqual(await sha256(password), await sha256(process.env.APP_PASSWORD ?? ""))) {
+    await db.insert(authFailures).values({ ip });
+    await db.delete(authFailures).where(lt(authFailures.at, new Date(Date.now() - 86_400_000)));
+    await new Promise((r) => setTimeout(r, 750));
+    return "Wrong password";
+  }
+
+  await db.delete(authFailures).where(eq(authFailures.ip, ip));
+  (await cookies()).set(SESSION_COOKIE, await createSessionToken(), {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 60 * 60 * 24 * 365,
+    maxAge: SESSION_MAX_AGE_S,
     path: "/",
   });
   redirect("/");
+}
+
+async function sha256(s: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return Buffer.from(digest).toString("hex");
 }

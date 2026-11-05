@@ -43,6 +43,20 @@ Open http://localhost:3000 and press **Fetch new**. With `DATABASE_URL` unset it
 3. Deploy. `vercel-build` runs the migrations, and `vercel.json` schedules a daily fetch at 06:00 UTC.
 4. On your phone, open the site, sign in, then Share → Add to Home Screen.
 
+## Crediting the research
+
+Every thread page has an "Original paper" block: the full author list (or the collaboration, for big teams), institutions, journal, arXiv id, DOI, licence, and a copyable APA-style citation and BibTeX entry. Cards show the lead institution. Institutions come from INSPIRE-HEP where it indexes the paper, otherwise from the affiliations in arXiv's HTML, or OpenAlex for journal papers, looked up only when a paper is written up.
+
+## Security
+
+- **Sign-in**: one password (`APP_PASSWORD`). Sessions are signed cookies that expire after 90 days; changing the password or `SESSION_SECRET` signs every device out. After 8 wrong attempts from one address (or 40 overall) in 15 minutes, sign-in pauses.
+- **Fails closed**: a production deployment without `APP_PASSWORD` answers every request with 503 instead of running open on your API key. The cron endpoint needs `CRON_SECRET`.
+- **Spend cap**: summaries stop for the month at the budget in Settings (default $10).
+- **Outbound fetches**: PDF and full-text links from third-party metadata only go to public http(s) hosts on standard ports, with every redirect re-checked.
+- **Headers**: content security policy, no framing, nosniff, strict referrer policy and HSTS in production.
+- **Model output** is rendered as plain text, so a paper can't inject markup into the app. It can still mislead a summary, which is why every thread links to the paper.
+- **Secrets** live only in environment variables; `.env*` files (except `.env.example`) are git-ignored.
+
 ## Costs
 
 Measured on five recent physics papers (about 23k tokens of text each):

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Paper } from "@/lib/db/schema";
-import { authorLine, relativeTime } from "@/lib/format";
+import { creditLine, relativeTime } from "@/lib/format";
 import { categoryShort } from "@/lib/topics";
 import { SummariseButton } from "./SummariseButton";
 
@@ -18,7 +18,7 @@ export function QueueList({ papers }: { papers: Paper[] }) {
       {papers.map((p) => (
         <li key={p.id} className="border-b border-line px-4 py-3">
           <div className="flex items-baseline gap-1 text-[13px] text-muted">
-            <span className="truncate">{authorLine(p.authors)}</span>
+            <span className="truncate">{creditLine(p)}</span>
             <span className="shrink-0">
               · {p.primaryCategory ? categoryShort(p.primaryCategory) : (p.venue ?? "journal")} · {relativeTime(p.publishedAt)}
             </span>
