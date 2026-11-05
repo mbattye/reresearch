@@ -5,6 +5,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import type { Paper, ThreadPost, ThreadSection } from "./db/schema";
 import { downloadPdf, getFullText } from "./fulltext";
+import { DEFAULT_LEVEL, getLevel } from "./levels";
 import { costUsd } from "./pricing";
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -14,6 +15,8 @@ export interface SummaryConfig {
   effort: Effort;
   /** "text": extracted full text (cheap). "pdf": the whole PDF as a document, figures included (~3x the tokens). */
   input: "text" | "pdf";
+  /** Reading level 1 (Crayons) to 6 (Referee #2); see src/skills/levels. */
+  level: number;
 }
 
 export const EFFORTS: Effort[] = ["low", "medium", "high"];
@@ -24,6 +27,7 @@ export function defaultConfig(): SummaryConfig {
     model: process.env.SUMMARY_MODEL ?? "claude-sonnet-5-5",
     effort: effort && EFFORTS.includes(effort) ? effort : "medium",
     input: process.env.SUMMARY_INPUT === "pdf" ? "pdf" : "text",
+    level: DEFAULT_LEVEL,
   };
 }
 
@@ -112,31 +116,37 @@ function normalise(raw: z.infer<typeof ThreadSchema>): GeneratedThread {
   };
 }
 
-const SYSTEM_PROMPT = `You write threads for reresearch, a feed that turns research papers into short posts the reader scrolls through on their phone in spare moments. The reader is sharp and curious, comfortable with undergraduate physics and maths, but usually not a specialist in the paper's subfield. They want to understand what the paper actually did and found, and come away knowing something real. They do not want to be sold to, and they do not want a press release.
+// Shared by every reading level. The level guide (src/skills/levels) is appended and decides the
+// audience, vocabulary, maths, comparisons, length and emphasis; the rules here never change.
+const BASE_PROMPT = `You write threads for reresearch, a feed that turns research papers into short posts the reader scrolls through on their phone in spare moments. Readers want to understand what the paper actually did and found, and come away knowing something real. They do not want to be sold to, and they do not want a press release. How much background they have is set by the reading-level guide at the end.
 
-Read the whole paper before writing. Then build the thread:
+Read the whole paper before writing. Then build the thread, in this order:
 
-- Headline: the punchline, not the topic. "X could detect Y, but too weakly to Z" beats "Study examines X".
-- Hook: what the paper establishes and why that is interesting, in plain words first, then the one number that carries it. Someone skimming the feed should get the point from the hook alone. Keep it under about 300 characters; save full expressions, conditions and qualifiers for later posts. No questions as hooks.
-- Context (from the introduction): the open problem or tension this work addresses, what was known before, and what limited earlier attempts. Enough that the result means something.
-- Approach (from the method): what they actually did. The apparatus, dataset, model or derivation; the key technique and, in a clause, how it works. Mention scale where it matters (luminosity, qubit count, shot count, simulation size).
-- Results: the main findings with the numbers that carry them: values, uncertainties, significance, and the comparison that gives them meaning (previous best, theory prediction, Standard Model expectation).
-- Caveats: what the paper does not show, key assumptions, dominant systematics, limits the authors acknowledge, and any obvious ones they don't. Note that arXiv papers are preprints unless the paper says it has been published.
+- Headline: the punchline in words, not the topic and not a formula. "X could detect Y, but too weakly to Z" beats "Study examines X" and beats an equation.
+- Hook: what the paper establishes and why that is interesting, then the number that carries it, pitched for the reader's level. Someone skimming the feed should get the point from the hook alone. Save conditions and qualifiers for later posts. No questions as hooks.
+- Context: the open problem this work addresses and what was known or missing before.
+- Approach: what they actually did, and how.
+- Results: the main findings and the numbers that carry them.
+- Caveats: what the paper does not show, its key assumptions and limits. Note that arXiv papers are preprints unless the paper says it has been published.
 - Takeaway: what this changes, rules out or enables next, sized honestly. Incremental work is fine; call it incremental.
 
-Voice:
+Rules at every level:
 - Facts first. Every post should teach the reader something; cut any sentence that only builds anticipation.
-- Engaging through precision, clear structure and a dry eye for what is genuinely surprising, odd or elegant. Wit is welcome when it comes from the material itself.
+- Engaging through clarity and a dry eye for what is genuinely surprising, odd or elegant. Wit is welcome when it comes from the material itself.
 - No hype words (breakthrough, game-changer, revolutionary, mind-blowing), no exclamation marks, no emojis, no hashtags, no thread markers like "1/" or "🧵", and none of "Let's dive in", "Buckle up", "Here's the thing", "But wait".
-- Analogies: avoid them. Use one only if it explains a mechanism better than a direct description would; most threads should contain none. Never stack them.
-- Keep the field's real terminology, because the reader wants to learn it, and define each term in a short clause the first time it appears.
-- Leave out the paper's internal labels (shot or run numbers, figure, table and equation numbers, names like "S60" for a flux surface) unless the reader genuinely needs them.
-- Numbers keep their units and uncertainties as reported. Use Unicode for light maths (σ, ħ, √s = 13.6 TeV, 10⁻⁹, ≲, ⟨n⟩). No LaTeX.
 - Be calibrated: separate what was measured, what was inferred and what was speculated. Attribute claims to the authors where they are the authors' interpretation.
-- British English spelling.
-- Plain text only, no markdown. Each post stands alone when read on a phone: 1-4 sentences.
+- Leave out the paper's internal labels (shot or run numbers, figure, table and equation numbers) unless the reader genuinely needs them.
+- No LaTeX in the output; the paper's maths arrives as LaTeX, so translate it.
+- British English spelling. Plain text only, no markdown. Each post stands alone when read on a phone.
 
-Accuracy rules: use only what is in the paper. Do not invent numbers, comparisons or context. If you were given only the abstract, say so in the caveat post, write fewer posts, and do not pad.`;
+Accuracy rules: any number you convert or rephrase (unit conversions, "ten times lighter", "about the size of") must be arithmetically right; if you are not certain, quote the paper's own number or leave it out. Use only what is in the paper. Do not invent numbers, comparisons or context, and do not criticise the paper for omitting something without checking the full text. If you were given only the abstract, say so in the caveat post, write fewer posts, and do not pad.
+
+Where the reading-level guide below differs from these defaults on audience, vocabulary, numbers, comparisons, length or emphasis, follow the guide. The structure and the rules above never change. The guide's calibration example shows the pitch for a different paper; do not reuse its content.`;
+
+export function systemPrompt(level: number): string {
+  const guide = getLevel(level);
+  return `${BASE_PROMPT}\n\n# Reading level ${guide.level} of 6: ${guide.name} (${guide.tagline})\n\n${guide.body}`;
+}
 
 export type InputMode = "html" | "pdf-text" | "pdf" | "abstract";
 
@@ -151,6 +161,7 @@ export interface Material {
 
 export interface SummaryResult {
   thread: GeneratedThread;
+  level: number;
   inputMode: InputMode;
   model: string;
   inputTokens: number;
@@ -186,7 +197,7 @@ export function buildParams(paper: Paper, material: Material, config: SummaryCon
     model: config.model,
     max_tokens: 32000,
     output_config: { effort: config.effort, format: { type: format.type, schema: format.schema } },
-    system: SYSTEM_PROMPT,
+    system: systemPrompt(config.level),
     messages: [{ role: "user", content }],
   };
 }
@@ -222,6 +233,7 @@ export async function summarisePaper(paper: Paper, config: SummaryConfig = defau
   const inputTokens = totalInput(message.usage);
   return {
     thread: normalise(message.parsed_output),
+    level: config.level,
     inputMode: material.mode,
     model: message.model,
     inputTokens,

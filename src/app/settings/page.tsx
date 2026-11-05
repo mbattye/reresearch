@@ -8,6 +8,7 @@ import { getPreferences, getSummaryConfig, monthlyBudget } from "@/lib/pipeline"
 import { formatUsd } from "@/lib/pricing";
 import { CATEGORY_LABELS, SUMMARY_MODELS } from "@/lib/topics";
 import { FetchButton } from "@/components/FetchButton";
+import { LevelSlider } from "@/components/LevelSlider";
 import { savePreferences } from "../actions";
 
 export const maxDuration = 300;
@@ -60,6 +61,14 @@ async function Settings() {
       </section>
 
       <form action={savePreferences}>
+        <section className="px-4 py-4">
+          <h2 className={sectionTitle}>Reading level</h2>
+          <p className={hint}>How much background threads assume. New threads use it; older ones can be rewritten from the thread page.</p>
+          <div className="mt-3">
+            <LevelSlider initial={prefs.readingLevel} />
+          </div>
+        </section>
+
         <section className="px-4 py-4">
           <h2 className={sectionTitle}>arXiv categories</h2>
           <p className={hint}>New submissions in these categories are fetched on each run.</p>

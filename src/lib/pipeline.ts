@@ -57,6 +57,7 @@ export async function getSummaryConfig(): Promise<SummaryConfig> {
     model: prefs.summaryModel ?? base.model,
     input: prefs.summaryInput ?? base.input,
     effort: prefs.summaryEffort ?? base.effort,
+    level: prefs.readingLevel,
   };
 }
 
@@ -201,6 +202,7 @@ export async function submitBatch(list: Paper[]): Promise<string | undefined> {
       id: batch.id,
       paperIds: toSend.map((p) => p.id),
       model: config.model,
+      readingLevel: config.level,
       inputModes,
     });
     return batch.id;
@@ -236,6 +238,7 @@ export async function collectBatches(): Promise<number> {
         const inputTokens = totalInput(message.usage);
         await saveThread(paperId, {
           thread: parseThread(message),
+          level: b.readingLevel,
           inputMode: (b.inputModes[paperId] ?? "abstract") as SummaryResult["inputMode"],
           model: message.model,
           inputTokens,
@@ -480,6 +483,7 @@ async function saveThread(paperId: string, r: SummaryResult, batched: boolean) {
     inputTokens: r.inputTokens,
     outputTokens: r.outputTokens,
     costUsd: r.costUsd,
+    readingLevel: r.level,
     batched,
     createdAt: new Date(),
   };

@@ -10,6 +10,9 @@ import { AutoRefresh } from "@/components/AutoRefresh";
 import { WriteOnOpen } from "@/components/WriteOnOpen";
 import type { Paper } from "@/lib/db/schema";
 import { getPaperView } from "@/lib/feed";
+import { levelName } from "@/lib/level-meta";
+import { getPreferences } from "@/lib/pipeline";
+import { RewriteButton } from "@/components/RewriteButton";
 import { CopyButton } from "@/components/CopyButton";
 import { formatBibtex, formatCitation } from "@/lib/citation";
 import { SECTION_LABELS, creditLine } from "@/lib/format";
@@ -42,6 +45,8 @@ async function Thread({ params }: Pick<PageProps<"/p/[id]">, "params">) {
   if (!item) notFound();
   const { paper, thread, interaction } = item;
   if (!thread) return <PendingThread paper={paper} />;
+  const { readingLevel } = await getPreferences();
+  const rewriting = paper.status === "summarising" || paper.status === "new";
   const date = formatDate(paper.publishedAt);
 
   const posts = [{ section: null, text: thread.hook }, ...thread.posts];
@@ -50,6 +55,7 @@ async function Thread({ params }: Pick<PageProps<"/p/[id]">, "params">) {
     <>
       <TopBar />
       <MarkRead paperId={paper.id} />
+      <AutoRefresh active={rewriting} ms={5000} />
       <main>
         <article className="px-4 pt-3">
           <div className="flex items-center gap-3">
@@ -127,7 +133,17 @@ async function Thread({ params }: Pick<PageProps<"/p/[id]">, "params">) {
             <p className="mt-2 leading-relaxed text-muted">{paper.abstract}</p>
           </details>
           <PaperLinks paper={paper} />
-          <p className="mt-4 text-[12px] text-muted">
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-[13px]">
+            <span className="rounded-full bg-accent-soft px-2.5 py-1 text-accent">
+              Written for {levelName(thread.readingLevel)}
+            </span>
+            {rewriting ? (
+              <span className="animate-pulse text-accent">Rewriting at {levelName(readingLevel)}…</span>
+            ) : (
+              thread.readingLevel !== readingLevel && <RewriteButton paperId={paper.id} levelName={levelName(readingLevel)} />
+            )}
+          </div>
+          <p className="mt-3 text-[12px] text-muted">
             Written by {thread.model} from the {INPUT_LABELS[thread.inputMode] ?? thread.inputMode}
             {thread.costUsd != null && ` for ${formatUsd(thread.costUsd)}${thread.batched ? " (batched)" : ""}`}. Check
             the paper before citing anything.

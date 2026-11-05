@@ -103,6 +103,8 @@ export const threads = pgTable("threads", {
   outputTokens: integer("output_tokens"),
   costUsd: real("cost_usd"),
   batched: boolean("batched").notNull().default(false),
+  // Reading level it was written at, 1 (Crayons) to 6 (Referee #2). (`level` above is the paper's own difficulty.)
+  readingLevel: integer("reading_level").notNull().default(4),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -137,6 +139,7 @@ export const preferences = pgTable("preferences", {
   summaryModel: text("summary_model"),
   summaryInput: text("summary_input").$type<"text" | "pdf">(),
   summaryEffort: text("summary_effort").$type<"low" | "medium" | "high">(),
+  readingLevel: integer("reading_level").notNull().default(4),
   // Summaries stop for the rest of the month once this much has been spent. Null = MONTHLY_BUDGET_USD or $10.
   monthlyBudgetUsd: real("monthly_budget_usd"),
   sources: jsonb("sources")
@@ -158,6 +161,7 @@ export const summaryBatches = pgTable("summary_batches", {
   id: text("id").primaryKey(),
   paperIds: jsonb("paper_ids").$type<string[]>().notNull(),
   model: text("model").notNull(),
+  readingLevel: integer("reading_level").notNull().default(4),
   // Material mode per paper id, needed to record how each thread was written.
   inputModes: jsonb("input_modes").$type<Record<string, string>>().notNull(),
   status: text("status").$type<"pending" | "collected">().notNull().default("pending"),

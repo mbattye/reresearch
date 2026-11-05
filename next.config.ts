@@ -32,6 +32,8 @@ const nextConfig: NextConfig = {
   // PGlite ships WebAssembly and data files that must be loaded from node_modules, not bundled.
   serverExternalPackages: ["@electric-sql/pglite"],
   poweredByHeader: false,
+  // The reading-level guides are read from disk at runtime; ship them with every server function.
+  outputFileTracingIncludes: { "/**": ["./src/skills/levels/*.md"] },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

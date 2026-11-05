@@ -1,6 +1,6 @@
 "use server";
 
-import { eq, gt, lt, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
@@ -66,6 +66,21 @@ export async function addPapers(_prev: AddPaperState, formData: FormData): Promi
   }
 }
 
+/** Write an existing thread again at the reader's current level; the new one replaces it when done. */
+export async function rewriteThread(paperId: string) {
+  const db = await getDb();
+  const [paper] = await db
+    .update(schema.papers)
+    .set({ status: "new", error: null })
+    .where(and(eq(schema.papers.id, paperId), inArray(schema.papers.status, ["ready", "failed"])))
+    .returning({ id: schema.papers.id });
+  if (!paper) return;
+  after(async () => {
+    await summariseByIds([paperId]);
+  });
+  refresh();
+}
+
 /** Polled by the app while batched papers are waiting, so results show up without the next cron run. */
 export async function collectBatchResults() {
   if ((await collectBatches()) > 0) refresh();
@@ -101,6 +116,7 @@ export async function savePreferences(formData: FormData) {
   const model = String(formData.get("summaryModel") ?? "");
   const input = formData.get("summaryInput") === "pdf" ? "pdf" : "text";
   const effort = String(formData.get("summaryEffort") ?? "");
+  const readingLevel = Math.round(Number(formData.get("readingLevel")));
   const budget = Number(formData.get("monthlyBudgetUsd"));
 
   await getPreferences();
@@ -113,6 +129,7 @@ export async function savePreferences(formData: FormData) {
       summariesPerRun,
       summaryModel: SUMMARY_MODELS.some((m) => m.id === model) ? model : null,
       summaryInput: input,
+      readingLevel: readingLevel >= 1 && readingLevel <= 6 ? readingLevel : 4,
       summaryEffort: effort === "low" || effort === "medium" || effort === "high" ? effort : null,
       monthlyBudgetUsd: Number.isFinite(budget) && budget >= 0 ? Math.min(budget, 1000) : null,
       sources: {

@@ -43,6 +43,10 @@ Open http://localhost:3000 and press **Fetch new**. With `DATABASE_URL` unset it
 3. Deploy. `vercel-build` runs the migrations, and `vercel.json` schedules a daily fetch at 06:00 UTC.
 4. On your phone, open the site, sign in, then Share → Add to Home Screen.
 
+## Reading levels
+
+A slider in Settings pitches threads from **Crayons** (explain it like I'm five) through Pub quiz, Science section, **Undergraduate** (the default), Journal club, to **Referee #2** (expert in the field). Each level is a plain markdown guide in `src/skills/levels/`, appended to the shared writing rules in `src/lib/summarise.ts`; edit the guides to change the voice, no code needed. Threads record the level they were written at, and a thread written at a different level offers "Rewrite at {your level}".
+
 ## Crediting the research
 
 Every thread page has an "Original paper" block: the full author list (or the collaboration, for big teams), institutions, journal, arXiv id, DOI, licence, and a copyable APA-style citation and BibTeX entry. Cards show the lead institution. Institutions come from INSPIRE-HEP where it indexes the paper, otherwise from the affiliations in arXiv's HTML, or OpenAlex for journal papers, looked up only when a paper is written up.
