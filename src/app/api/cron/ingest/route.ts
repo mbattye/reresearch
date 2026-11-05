@@ -11,7 +11,13 @@ export async function GET(request: Request) {
   if (!secret || !safeEqual(auth, `Bearer ${secret}`)) {
     return new Response("Unauthorized", { status: 401 });
   }
-  // Scheduled runs use the half-price batch unless SUMMARY_BATCH=false.
-  const report = await ingest({ batch: process.env.SUMMARY_BATCH !== "false" });
-  return Response.json(report);
+  try {
+    // Scheduled runs use the half-price batch unless SUMMARY_BATCH=false.
+    const report = await ingest({ batch: process.env.SUMMARY_BATCH !== "false" });
+    return Response.json(report);
+  } catch (err) {
+    // Only the cron caller (holder of CRON_SECRET) sees this; it shows in the Vercel cron log.
+    console.error("[cron] ingest failed", err);
+    return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+  }
 }

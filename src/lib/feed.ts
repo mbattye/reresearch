@@ -85,10 +85,13 @@ export async function getSpend() {
   const monthStart = new Date();
   monthStart.setUTCDate(1);
   monthStart.setUTCHours(0, 0, 0, 0);
+  // Raw sql params bypass the column's type mapping, so pass an ISO string and cast it; a bare Date
+  // is sent as "Sun Nov 01 2026 …" by postgres-js, which Postgres rejects (PGlite happens to accept it).
+  const since = sql`${monthStart.toISOString()}::timestamptz`;
   const [row] = await db
     .select({
-      month: sql<number>`coalesce(sum(${threads.costUsd}) filter (where ${threads.createdAt} >= ${monthStart}), 0)::float`,
-      monthCount: sql<number>`count(*) filter (where ${threads.createdAt} >= ${monthStart})::int`,
+      month: sql<number>`coalesce(sum(${threads.costUsd}) filter (where ${threads.createdAt} >= ${since}), 0)::float`,
+      monthCount: sql<number>`count(*) filter (where ${threads.createdAt} >= ${since})::int`,
       total: sql<number>`coalesce(sum(${threads.costUsd}), 0)::float`,
       count: sql<number>`count(${threads.costUsd})::int`,
     })
