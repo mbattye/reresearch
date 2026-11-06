@@ -8,10 +8,11 @@ import { BackIcon } from "@/components/icons";
 import { MarkRead } from "@/components/MarkRead";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { WriteOnOpen } from "@/components/WriteOnOpen";
-import type { Paper } from "@/lib/db/schema";
+import { requireUser } from "@/lib/auth";
+import type { Paper, ThreadJob } from "@/lib/db/schema";
 import { getPaperView } from "@/lib/feed";
 import { levelName } from "@/lib/level-meta";
-import { getPreferences } from "@/lib/pipeline";
+import { canWrite, getPreferences } from "@/lib/pipeline";
 import { RewriteButton } from "@/components/RewriteButton";
 import { CopyButton } from "@/components/CopyButton";
 import { formatBibtex, formatCitation } from "@/lib/citation";
@@ -41,12 +42,13 @@ function TopBar() {
 async function Thread({ params }: Pick<PageProps<"/p/[id]">, "params">) {
   await connection();
   const { id } = await params;
-  const item = await getPaperView(decodeURIComponent(id));
+  const reader = await requireUser();
+  const { readingLevel } = await getPreferences(reader);
+  const item = await getPaperView(reader.id, decodeURIComponent(id), readingLevel);
   if (!item) notFound();
-  const { paper, thread, interaction } = item;
-  if (!thread) return <PendingThread paper={paper} />;
-  const { readingLevel } = await getPreferences();
-  const rewriting = paper.status === "summarising" || paper.status === "new";
+  const { paper, thread, interaction, job } = item;
+  if (!thread) return <PendingThread paper={paper} job={job} canWrite={await canWrite(reader)} />;
+  const rewriting = !!job && job.status !== "failed";
   const date = formatDate(paper.publishedAt);
 
   const posts = [{ section: null, text: thread.hook }, ...thread.posts];
@@ -171,12 +173,12 @@ function formatDate(d: Date) {
 }
 
 /** A paper that hasn't been written up yet: show what we have and write the thread now. */
-function PendingThread({ paper }: { paper: Paper }) {
+function PendingThread({ paper, job, canWrite }: { paper: Paper; job: ThreadJob | null; canWrite: boolean }) {
   return (
     <>
       <TopBar />
-      <AutoRefresh active ms={5000} />
-      {(paper.status === "new" || paper.status === "failed") && <WriteOnOpen paperId={paper.id} />}
+      <AutoRefresh active={canWrite} ms={5000} />
+      {canWrite && (!job || job.status === "failed") && <WriteOnOpen paperId={paper.id} />}
       <main className="px-4 pt-3">
         <div className="flex items-center gap-3">
           <Avatar category={paper.primaryCategory} size={44} />
@@ -190,11 +192,19 @@ function PendingThread({ paper }: { paper: Paper }) {
         </div>
         <h1 className="mt-3 text-[19px] leading-tight font-bold">{paper.title}</h1>
         <div className="mt-4 rounded-xl bg-accent-soft px-3 py-2.5 text-[14px] text-accent">
-          {paper.status === "batched"
+          {!canWrite ? (
+            <>
+              Not written up yet.{" "}
+              <Link href="/settings" className="font-semibold underline">
+                Add your API key
+              </Link>{" "}
+              to have it written.
+            </>
+          ) : job?.status === "batched"
             ? "This one is in the half-price overnight batch. It'll appear here as soon as it's ready."
-            : paper.status !== "failed"
+            : job?.status !== "failed"
               ? "Writing the thread. This usually takes under a minute; the page updates itself."
-              : `Last attempt failed: ${paper.error ?? "unknown error"}. Retrying.`}
+              : `Last attempt failed: ${job.error ?? "unknown error"}. Retrying.`}
         </div>
         <p className="mt-4 text-[14px] leading-relaxed text-muted">{paper.abstract}</p>
         <PaperLinks paper={paper} />

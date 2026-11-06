@@ -1,50 +1,105 @@
-// Single-reader app: one shared password (APP_PASSWORD) unlocks a signed session cookie.
-// Locally, with APP_PASSWORD unset, everything is open. In production it must be set:
-// without it the app refuses every request rather than run open on someone's API key.
+import "server-only";
+import { betterAuth } from "better-auth";
+import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { nextCookies } from "better-auth/next-js";
+import { magicLink } from "better-auth/plugins";
+import { eq } from "drizzle-orm";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
+import { isAdmin } from "./auth-config";
+import { getDb, schema } from "./db";
+import { sendSignInEmail } from "./email";
 
-export const SESSION_COOKIE = "rr_session";
-export const SESSION_MAX_AGE_S = 60 * 60 * 24 * 90;
+const SESSION_DAYS = 90;
 
-export function authEnabled(): boolean {
-  return !!process.env.APP_PASSWORD;
+function baseURL(): string {
+  if (process.env.BETTER_AUTH_URL) return process.env.BETTER_AUTH_URL;
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  return "http://localhost:3000";
 }
 
-/** Production with no password configured: lock the app instead of running it open. */
-export function misconfigured(): boolean {
-  return process.env.NODE_ENV === "production" && !authEnabled();
+async function createAuth() {
+  const secret = process.env.BETTER_AUTH_SECRET;
+  if (!secret && process.env.NODE_ENV === "production") throw new Error("BETTER_AUTH_SECRET is not set");
+  const db = await getDb();
+  return betterAuth({
+    baseURL: baseURL(),
+    secret: secret ?? "dev-only-secret-not-for-production-use",
+    database: drizzleAdapter(db, {
+      provider: "pg",
+      schema: { user: schema.user, session: schema.session, account: schema.account, verification: schema.verification },
+    }),
+    session: { expiresIn: 60 * 60 * 24 * SESSION_DAYS, updateAge: 60 * 60 * 24 },
+    plugins: [
+      magicLink({
+        // Invite only: links go to existing accounts. Invites (and an admin's first sign-in) create the account.
+        disableSignUp: true,
+        expiresIn: 15 * 60,
+        sendMagicLink: async ({ email, url }) => {
+          await sendSignInEmail(email, url);
+        },
+      }),
+      // Lets server actions set and clear the session cookie (must be last).
+      nextCookies(),
+    ],
+  });
 }
 
-// Signing key derives from the password (plus SESSION_SECRET if set), so changing either signs every device out.
-async function key(): Promise<CryptoKey> {
-  const secret = `${process.env.SESSION_SECRET ?? ""}:${process.env.APP_PASSWORD ?? ""}`;
-  return crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, [
-    "sign",
-  ]);
+type Auth = Awaited<ReturnType<typeof createAuth>>;
+const globalForAuth = globalThis as unknown as { __reresearchAuth?: Promise<Auth> };
+
+/** Built lazily because the database connection is (PGlite locally needs async start-up). */
+export function getAuth(): Promise<Auth> {
+  globalForAuth.__reresearchAuth ??= createAuth().catch((err) => {
+    globalForAuth.__reresearchAuth = undefined;
+    throw err;
+  });
+  return globalForAuth.__reresearchAuth;
 }
 
-async function sign(payload: string): Promise<string> {
-  const sig = await crypto.subtle.sign("HMAC", await key(), new TextEncoder().encode(`reresearch-session-v2:${payload}`));
-  return Buffer.from(sig).toString("base64url");
+export interface CurrentUser {
+  id: string;
+  email: string;
+  name: string;
+  isAdmin: boolean;
 }
 
-/** "v2.<issued-at seconds>.<signature>" */
-export async function createSessionToken(now = Date.now()): Promise<string> {
-  const issued = String(Math.floor(now / 1000));
-  return `v2.${issued}.${await sign(issued)}`;
+export async function getCurrentUser(): Promise<CurrentUser | null> {
+  const auth = await getAuth();
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session) return null;
+  const { id, email, name } = session.user;
+  return { id, email, name, isAdmin: isAdmin(email) };
 }
 
-export async function verifySessionToken(token: string, now = Date.now()): Promise<boolean> {
-  const [version, issued, sig] = token.split(".");
-  if (version !== "v2" || !issued || !sig || !/^\d+$/.test(issued)) return false;
-  const age = now / 1000 - Number(issued);
-  if (age < -60 || age > SESSION_MAX_AGE_S) return false;
-  return safeEqual(sig, await sign(issued));
+/** For pages and actions: the signed-in reader, or a redirect to sign in. */
+export async function requireUser(): Promise<CurrentUser> {
+  const u = await getCurrentUser();
+  if (!u) redirect("/login");
+  return u;
 }
 
-/** Constant-time comparison (for equal lengths; a length mismatch returns early, which reveals only the length). */
-export function safeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
+/** Create an account without signing it in (used by invites and an admin's first sign-in). */
+export async function ensureAccount(email: string): Promise<string> {
+  const db = await getDb();
+  const normalised = email.trim().toLowerCase();
+  const [existing] = await db.select({ id: schema.user.id }).from(schema.user).where(eq(schema.user.email, normalised));
+  if (existing) return existing.id;
+  const [created] = await db
+    .insert(schema.user)
+    .values({ id: crypto.randomUUID(), email: normalised, name: normalised.split("@")[0], emailVerified: false })
+    .onConflictDoNothing()
+    .returning({ id: schema.user.id });
+  if (created) return created.id;
+  const [raced] = await db.select({ id: schema.user.id }).from(schema.user).where(eq(schema.user.email, normalised));
+  return raced.id;
+}
+
+export async function accountExists(email: string): Promise<boolean> {
+  const db = await getDb();
+  const [row] = await db
+    .select({ id: schema.user.id })
+    .from(schema.user)
+    .where(eq(schema.user.email, email.trim().toLowerCase()));
+  return !!row;
 }

@@ -6,7 +6,9 @@ import { BatchCollector } from "@/components/BatchCollector";
 import { Header } from "@/components/Header";
 import { PostCard } from "@/components/PostCard";
 import { QueueList } from "@/components/QueueList";
-import { getFeed, getQueue, getStatusCounts, type FeedTab } from "@/lib/feed";
+import { requireUser } from "@/lib/auth";
+import { getFeed, getJobCounts, getQueue, type FeedTab } from "@/lib/feed";
+import { getPreferences } from "@/lib/pipeline";
 import { FetchButton } from "@/components/FetchButton";
 
 export const maxDuration = 300;
@@ -25,8 +27,11 @@ async function HomeContent({ searchParams }: Pick<PageProps<"/">, "searchParams"
   await connection();
   const raw = (await searchParams).tab;
   const tab = TAB_IDS.includes(raw as FeedTab) ? (raw as FeedTab) : "foryou";
-  const counts = await getStatusCounts();
-  const summarising = (counts.summarising ?? 0) > 0;
+  const reader = await requireUser();
+  const { readingLevel } = await getPreferences(reader);
+  const counts = await getJobCounts(reader.id);
+  const writing = counts.writing ?? 0;
+  const summarising = writing > 0;
 
   return (
     <>
@@ -35,16 +40,20 @@ async function HomeContent({ searchParams }: Pick<PageProps<"/">, "searchParams"
       <BatchCollector active={(counts.batched ?? 0) > 0} />
       {summarising && tab !== "queue" && (
         <Link href="/?tab=queue" className="block border-b border-line bg-accent-soft px-4 py-2 text-[13px] text-accent">
-          Summarising {counts.summarising} paper{counts.summarising === 1 ? "" : "s"}…
+          Writing {writing} thread{writing === 1 ? "" : "s"}…
         </Link>
       )}
-      {tab === "queue" ? <Queue /> : <Feed tab={tab} />}
+      {tab === "queue" ? (
+        <Queue userId={reader.id} level={readingLevel} />
+      ) : (
+        <Feed userId={reader.id} level={readingLevel} tab={tab} />
+      )}
     </>
   );
 }
 
-async function Feed({ tab }: { tab: Exclude<FeedTab, "queue"> }) {
-  const items = await getFeed(tab);
+async function Feed({ userId, level, tab }: { userId: string; level: number; tab: Exclude<FeedTab, "queue"> }) {
+  const items = await getFeed(userId, level, tab);
   if (items.length === 0) return <EmptyState tab={tab} />;
   return (
     <main>
@@ -56,8 +65,8 @@ async function Feed({ tab }: { tab: Exclude<FeedTab, "queue"> }) {
   );
 }
 
-async function Queue() {
-  const papers = await getQueue();
+async function Queue({ userId, level }: { userId: string; level: number }) {
+  const items = await getQueue(userId, level);
   return (
     <main>
       <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
@@ -66,10 +75,10 @@ async function Queue() {
         </p>
         <FetchButton />
       </div>
-      {papers.length === 0 ? (
+      {items.length === 0 ? (
         <p className="px-4 py-10 text-center text-[14px] text-muted">Nothing queued. Fetch new papers to fill it.</p>
       ) : (
-        <QueueList papers={papers} />
+        <QueueList items={items} />
       )}
     </main>
   );

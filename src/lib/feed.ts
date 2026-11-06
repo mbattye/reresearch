@@ -1,86 +1,138 @@
 import "server-only";
-import { desc, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, notExists, or, sql } from "drizzle-orm";
 import { getDb, schema } from "./db";
-import type { Interaction, Paper, Thread } from "./db/schema";
+import type { Paper, Thread, ThreadJob, UserPaper } from "./db/schema";
 import { feedRank } from "./ranking";
 
-const { papers, threads, interactions, termAffinity } = schema;
+const { papers, threads, threadJobs, userPapers, userTerms } = schema;
 
 export type FeedTab = "foryou" | "latest" | "saved" | "queue";
 
 export interface FeedItem {
   paper: Paper;
   thread: Thread;
-  interaction: Interaction | null;
+  /** This reader's score, likes and so on for the paper. */
+  interaction: UserPaper;
 }
 
 const FEED_WINDOW = 300;
 
-export async function getFeed(tab: Exclude<FeedTab, "queue">): Promise<FeedItem[]> {
+/** Prefer the thread at the reader's level, else the nearest level (ties go to the more detailed one). */
+function bestThread(list: Thread[], level: number): Thread {
+  return [...list].sort(
+    (a, b) => Math.abs(a.readingLevel - level) - Math.abs(b.readingLevel - level) || b.readingLevel - a.readingLevel,
+  )[0];
+}
+
+export async function getFeed(userId: string, level: number, tab: Exclude<FeedTab, "queue">): Promise<FeedItem[]> {
   const db = await getDb();
   const rows = await db
-    .select({ paper: papers, thread: threads, interaction: interactions })
-    .from(threads)
-    .innerJoin(papers, eq(papers.id, threads.paperId))
-    .leftJoin(interactions, eq(interactions.paperId, papers.id))
+    .select({ paper: papers, thread: threads, interaction: userPapers })
+    .from(userPapers)
+    .innerJoin(papers, eq(papers.id, userPapers.paperId))
+    .innerJoin(threads, eq(threads.paperId, userPapers.paperId))
     .where(
-      tab === "saved"
-        ? eq(interactions.saved, true)
-        : sql`coalesce(${interactions.hidden}, false) = false`,
+      and(eq(userPapers.userId, userId), tab === "saved" ? eq(userPapers.saved, true) : eq(userPapers.hidden, false)),
     )
-    .orderBy(tab === "saved" ? desc(interactions.updatedAt) : desc(threads.createdAt))
-    .limit(FEED_WINDOW);
+    .orderBy(tab === "saved" ? desc(userPapers.updatedAt) : desc(threads.createdAt))
+    .limit(FEED_WINDOW * 3);
+
+  // One item per paper, showing the thread closest to the reader's level.
+  const byPaper = new Map<string, { item: FeedItem; threads: Thread[] }>();
+  for (const r of rows) {
+    const entry = byPaper.get(r.paper.id);
+    if (entry) entry.threads.push(r.thread);
+    else byPaper.set(r.paper.id, { item: r, threads: [r.thread] });
+  }
+  const items = [...byPaper.values()].slice(0, FEED_WINDOW).map(({ item, threads: list }) => ({
+    ...item,
+    thread: bestThread(list, level),
+  }));
 
   if (tab === "foryou") {
     const now = new Date();
     const rank = (r: FeedItem) =>
       // Papers the reader asked for float to the top until read.
-      (r.paper.requested && !r.interaction?.readAt ? 10 : 0) +
+      (r.interaction.requested && !r.interaction.readAt ? 10 : 0) +
       feedRank({
-        score: r.paper.score,
+        score: r.interaction.score,
         // "New to you": a trending or recommended paper counts as fresh when it was found, not when it was posted.
-        publishedAt: new Date(Math.max(r.paper.publishedAt.getTime(), r.paper.createdAt.getTime())),
-        read: !!r.interaction?.readAt,
+        publishedAt: new Date(Math.max(r.paper.publishedAt.getTime(), r.interaction.createdAt.getTime())),
+        read: !!r.interaction.readAt,
         now,
       });
-    rows.sort((a, b) => rank(b) - rank(a));
+    items.sort((a, b) => rank(b) - rank(a));
   } else if (tab === "latest") {
-    rows.sort((a, b) => b.paper.publishedAt.getTime() - a.paper.publishedAt.getTime());
+    items.sort((a, b) => b.paper.publishedAt.getTime() - a.paper.publishedAt.getTime());
   }
-  return rows;
+  return items;
 }
 
-/** A paper with its thread if one has been written yet. */
-export async function getPaperView(
-  paperId: string,
-): Promise<{ paper: Paper; thread: Thread | null; interaction: Interaction | null } | null> {
-  const db = await getDb();
-  const [row] = await db
-    .select({ paper: papers, thread: threads, interaction: interactions })
-    .from(papers)
-    .leftJoin(threads, eq(threads.paperId, papers.id))
-    .leftJoin(interactions, eq(interactions.paperId, papers.id))
-    .where(eq(papers.id, paperId));
-  return row ?? null;
+/** Work in progress is visible to everyone at that level; a failure only to the reader it failed for. */
+function visibleJob(userId: string) {
+  return or(ne(threadJobs.status, "failed"), eq(threadJobs.userId, userId));
 }
 
-/** Candidates not yet summarised, best first, plus anything in progress or failed. */
-export async function getQueue(): Promise<Paper[]> {
+export interface PaperView {
+  paper: Paper;
+  thread: Thread | null;
+  interaction: UserPaper | null;
+  /** Writing, batched or failed at the reader's level, if anything is. */
+  job: ThreadJob | null;
+}
+
+/** A paper with the reader's best thread for it (if any has been written) and any job at their level. */
+export async function getPaperView(userId: string, paperId: string, level: number): Promise<PaperView | null> {
   const db = await getDb();
-  return db
-    .select()
-    .from(papers)
-    .where(ne(papers.status, "ready"))
+  const [paper] = await db.select().from(papers).where(eq(papers.id, paperId));
+  if (!paper) return null;
+  const [list, [interaction], [job]] = await Promise.all([
+    db.select().from(threads).where(eq(threads.paperId, paperId)),
+    db.select().from(userPapers).where(and(eq(userPapers.userId, userId), eq(userPapers.paperId, paperId))),
+    db
+      .select()
+      .from(threadJobs)
+      .where(and(eq(threadJobs.paperId, paperId), eq(threadJobs.readingLevel, level), visibleJob(userId))),
+  ]);
+  return { paper, thread: list.length ? bestThread(list, level) : null, interaction: interaction ?? null, job: job ?? null };
+}
+
+export interface QueueItem {
+  paper: Paper;
+  interaction: UserPaper;
+  job: ThreadJob | null;
+}
+
+/** The reader's papers with no thread yet, best first, with anything in progress or failed on top. */
+export async function getQueue(userId: string, level: number): Promise<QueueItem[]> {
+  const db = await getDb();
+  const rows = await db
+    .select({ paper: papers, interaction: userPapers, job: threadJobs })
+    .from(userPapers)
+    .innerJoin(papers, eq(papers.id, userPapers.paperId))
+    .leftJoin(
+      threadJobs,
+      and(eq(threadJobs.paperId, userPapers.paperId), eq(threadJobs.readingLevel, level), visibleJob(userId)),
+    )
+    .where(
+      and(
+        eq(userPapers.userId, userId),
+        eq(userPapers.hidden, false),
+        notExists(db.select().from(threads).where(eq(threads.paperId, userPapers.paperId))),
+      ),
+    )
     .orderBy(
-      sql`case ${papers.status} when 'summarising' then 0 when 'batched' then 1 when 'failed' then 2 else 3 end`,
-      desc(papers.requested),
-      desc(papers.score),
+      sql`case ${threadJobs.status} when 'writing' then 0 when 'batched' then 1 when 'failed' then 2 else 3 end`,
+      desc(userPapers.requested),
+      desc(userPapers.score),
       desc(papers.publishedAt),
     )
     .limit(150);
+  return rows;
 }
 
-export async function getSpend() {
+/** This reader's spend: threads their key paid for. */
+export async function getSpend(userId: string) {
   const db = await getDb();
   const monthStart = new Date();
   monthStart.setUTCDate(1);
@@ -95,66 +147,85 @@ export async function getSpend() {
       total: sql<number>`coalesce(sum(${threads.costUsd}), 0)::float`,
       count: sql<number>`count(${threads.costUsd})::int`,
     })
-    .from(threads);
+    .from(threads)
+    .where(eq(threads.writtenBy, userId));
   return row;
 }
 
-export async function getStatusCounts() {
+/** Jobs this reader's key is paying for right now. */
+export async function getJobCounts(userId: string) {
   const db = await getDb();
   const rows = await db
-    .select({ status: papers.status, n: sql<number>`count(*)::int` })
-    .from(papers)
-    .groupBy(papers.status);
-  return Object.fromEntries(rows.map((r) => [r.status, r.n])) as Partial<Record<Paper["status"], number>>;
+    .select({ status: threadJobs.status, n: sql<number>`count(*)::int` })
+    .from(threadJobs)
+    .where(and(eq(threadJobs.userId, userId), ne(threadJobs.status, "failed")))
+    .groupBy(threadJobs.status);
+  return Object.fromEntries(rows.map((r) => [r.status, r.n])) as Partial<Record<ThreadJob["status"], number>>;
 }
 
 type Flag = "liked" | "saved" | "hidden";
 
-// How much each signal moves the paper's tags in term_affinity.
+// How much each signal moves the paper's tags in the reader's learned interests.
 const AFFINITY_DELTA: Record<Flag, number> = { liked: 1, saved: 1.5, hidden: -1.5 };
 
-/** Toggle a flag and teach the ranker from it via the thread's tags. */
-export async function setFlag(paperId: string, flag: Flag, value: boolean): Promise<void> {
+/** Toggle a flag and teach this reader's ranker from it via the thread's tags. */
+export async function setFlag(userId: string, paperId: string, flag: Flag, value: boolean): Promise<void> {
   const db = await getDb();
-  const [existing] = await db.select().from(interactions).where(eq(interactions.paperId, paperId));
+  const [existing] = await db
+    .select()
+    .from(userPapers)
+    .where(and(eq(userPapers.userId, userId), eq(userPapers.paperId, paperId)));
   if ((existing?.[flag] ?? false) === value) return;
 
   await db
-    .insert(interactions)
-    .values({ paperId, [flag]: value, updatedAt: new Date() })
-    .onConflictDoUpdate({ target: interactions.paperId, set: { [flag]: value, updatedAt: new Date() } });
+    .insert(userPapers)
+    .values({ userId, paperId, [flag]: value, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: [userPapers.userId, userPapers.paperId],
+      set: { [flag]: value, updatedAt: new Date() },
+    });
 
-  const [thread] = await db.select({ tags: threads.tags }).from(threads).where(eq(threads.paperId, paperId));
-  if (!thread?.tags.length) return;
+  const tagRows = await db.select({ tags: threads.tags }).from(threads).where(eq(threads.paperId, paperId));
+  const tags = [...new Set(tagRows.flatMap((t) => t.tags))];
+  if (!tags.length) return;
   const delta = AFFINITY_DELTA[flag] * (value ? 1 : -1);
-  for (const term of thread.tags) {
+  for (const term of tags) {
     await db
-      .insert(termAffinity)
-      .values({ term, weight: delta })
+      .insert(userTerms)
+      .values({ userId, term, weight: delta })
       .onConflictDoUpdate({
-        target: termAffinity.term,
-        set: { weight: sql`${termAffinity.weight} + ${delta}`, updatedAt: new Date() },
+        target: [userTerms.userId, userTerms.term],
+        set: { weight: sql`${userTerms.weight} + ${delta}`, updatedAt: new Date() },
       });
   }
 }
 
-export async function markRead(paperId: string): Promise<void> {
+export async function markRead(userId: string, paperId: string): Promise<void> {
   const db = await getDb();
   await db
-    .insert(interactions)
-    .values({ paperId, readAt: new Date() })
+    .insert(userPapers)
+    .values({ userId, paperId, readAt: new Date() })
     .onConflictDoUpdate({
-      target: interactions.paperId,
-      set: { readAt: sql`coalesce(${interactions.readAt}, now())` },
+      target: [userPapers.userId, userPapers.paperId],
+      set: { readAt: sql`coalesce(${userPapers.readAt}, now())` },
     });
 }
 
-export async function getTopAffinities(limit = 20) {
+export async function getTopAffinities(userId: string, limit = 20) {
   const db = await getDb();
   return db
     .select()
-    .from(termAffinity)
-    .where(ne(termAffinity.weight, 0))
-    .orderBy(desc(sql`abs(${termAffinity.weight})`))
+    .from(userTerms)
+    .where(and(eq(userTerms.userId, userId), ne(userTerms.weight, 0)))
+    .orderBy(desc(sql`abs(${userTerms.weight})`))
     .limit(limit);
+}
+
+/** Readers the daily run works for: everyone with settings, i.e. who has signed in at least once. */
+export async function activeReaders() {
+  const db = await getDb();
+  return db
+    .select({ id: schema.user.id, email: schema.user.email })
+    .from(schema.user)
+    .where(inArray(schema.user.id, db.select({ id: schema.userSettings.userId }).from(schema.userSettings)));
 }

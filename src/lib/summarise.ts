@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import type { Paper, ThreadPost, ThreadSection } from "./db/schema";
+import type { Paper, Provider, ThreadPost, ThreadSection } from "./db/schema";
 import { downloadPdf, getFullText } from "./fulltext";
 import { DEFAULT_LEVEL, getLevel } from "./levels";
 import { costUsd } from "./pricing";
@@ -11,6 +11,7 @@ import { costUsd } from "./pricing";
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface SummaryConfig {
+  provider: Provider;
   model: string;
   effort: Effort;
   /** "text": extracted full text (cheap). "pdf": the whole PDF as a document, figures included (~3x the tokens). */
@@ -21,10 +22,16 @@ export interface SummaryConfig {
 
 export const EFFORTS: Effort[] = ["low", "medium", "high"];
 
+export const DEFAULT_MODELS: Record<Provider, string> = {
+  anthropic: process.env.SUMMARY_MODEL ?? "claude-sonnet-5-5",
+  openrouter: "anthropic/claude-sonnet-5.5",
+};
+
 export function defaultConfig(): SummaryConfig {
   const effort = process.env.SUMMARY_EFFORT as Effort | undefined;
   return {
-    model: process.env.SUMMARY_MODEL ?? "claude-sonnet-5-5",
+    provider: "anthropic",
+    model: DEFAULT_MODELS.anthropic,
     effort: effort && EFFORTS.includes(effort) ? effort : "medium",
     input: process.env.SUMMARY_INPUT === "pdf" ? "pdf" : "text",
     level: DEFAULT_LEVEL,
@@ -34,10 +41,9 @@ export function defaultConfig(): SummaryConfig {
 // Server-side refusal fallback ("default" mode) is offered for these models on the Claude API.
 const FALLBACK_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-opus-5", "claude-fable-5-1"];
 
-let client: Anthropic | undefined;
-export function anthropic(): Anthropic {
-  client ??= new Anthropic();
-  return client;
+/** Anthropic client for a reader's own key. */
+export function anthropicFor(apiKey: string): Anthropic {
+  return new Anthropic({ apiKey });
 }
 
 export const ThreadSchema = z.object({
@@ -210,21 +216,21 @@ export function parseThread(message: Anthropic.Message): GeneratedThread {
   return normalise(zodOutputFormat(ThreadSchema).parse(text));
 }
 
-export async function summarisePaper(paper: Paper, config: SummaryConfig = defaultConfig()): Promise<SummaryResult> {
-  const material = await prepareMaterial(paper, config);
+export async function summarisePaper(paper: Paper, config: SummaryConfig, apiKey: string): Promise<SummaryResult> {
+  // OpenRouter gets the extracted text only; whole-PDF input is an Anthropic feature here.
+  const material = await prepareMaterial(paper, config.provider === "openrouter" ? { ...config, input: "text" } : config);
+  if (config.provider === "openrouter") return summariseViaOpenRouter(paper, material, config, apiKey);
+
   const params = buildParams(paper, material, config);
   const useFallback = FALLBACK_MODELS.includes(config.model);
-
-  const stream = anthropic().beta.messages.stream({
+  const stream = anthropicFor(apiKey).beta.messages.stream({
     ...(params as Anthropic.Beta.MessageCreateParamsNonStreaming),
     output_config: { effort: config.effort, format: betaZodOutputFormat(ThreadSchema) },
     // On a safety-classifier decline, the API re-runs the request on its recommended fallback model.
     ...(useFallback ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
   });
   const message = await stream.finalMessage().catch((err: unknown) => {
-    if (err instanceof Error && err.message.includes("Could not resolve authentication method")) {
-      throw new Error("No Claude API key configured. Set ANTHROPIC_API_KEY (see .env.example).");
-    }
+    if (err instanceof Anthropic.AuthenticationError) throw new Error("Anthropic rejected the API key. Update it in Settings.");
     throw err;
   });
 
@@ -239,6 +245,63 @@ export async function summarisePaper(paper: Paper, config: SummaryConfig = defau
     inputTokens,
     outputTokens: message.usage.output_tokens,
     costUsd: costUsd({ model: message.model, inputTokens, outputTokens: message.usage.output_tokens }),
+    institutions: material.institutions,
+  };
+}
+
+interface OpenRouterResponse {
+  model: string;
+  choices: { message: { content: string | null }; finish_reason: string | null }[];
+  usage?: { prompt_tokens: number; completion_tokens: number; cost?: number };
+  error?: { message: string; code?: number };
+}
+
+/** Any model on OpenRouter that supports structured output, via its OpenAI-compatible endpoint. */
+async function summariseViaOpenRouter(
+  paper: Paper,
+  material: Material,
+  config: SummaryConfig,
+  apiKey: string,
+): Promise<SummaryResult> {
+  const format = zodOutputFormat(ThreadSchema);
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "X-Title": "reresearch",
+    },
+    body: JSON.stringify({
+      model: config.model,
+      max_tokens: 16000,
+      messages: [
+        { role: "system", content: systemPrompt(config.level) },
+        { role: "user", content: paperBrief(paper, material) },
+      ],
+      response_format: { type: "json_schema", json_schema: { name: "thread", strict: true, schema: format.schema } },
+      // Only route to providers that honour the schema, and report the exact cost.
+      provider: { require_parameters: true },
+      usage: { include: true },
+    }),
+    signal: AbortSignal.timeout(280_000),
+  });
+  const body = (await res.json().catch(() => ({}))) as OpenRouterResponse;
+  if (res.status === 401) throw new Error("OpenRouter rejected the API key. Update it in Settings.");
+  if (res.status === 402) throw new Error("Your OpenRouter account is out of credits.");
+  if (!res.ok || body.error) throw new Error(`OpenRouter: ${body.error?.message ?? res.status}`);
+
+  const choice = body.choices?.[0];
+  if (choice?.finish_reason === "length") throw new Error("Summary was cut off at max_tokens");
+  if (!choice?.message.content) throw new Error("OpenRouter returned an empty response");
+  const usage = body.usage ?? { prompt_tokens: 0, completion_tokens: 0 };
+  return {
+    thread: normalise(format.parse(choice.message.content)),
+    level: config.level,
+    inputMode: material.mode,
+    model: body.model ?? config.model,
+    inputTokens: usage.prompt_tokens,
+    outputTokens: usage.completion_tokens,
+    costUsd: usage.cost ?? null,
     institutions: material.institutions,
   };
 }

@@ -3,13 +3,22 @@ import { Suspense } from "react";
 import { connection } from "next/server";
 import { AddPaperForm } from "@/components/AddPaperForm";
 import { BackIcon } from "@/components/icons";
+import { ApiKeyForm } from "@/components/ApiKeyForm";
+import { FetchButton } from "@/components/FetchButton";
+import { InviteForm } from "@/components/InviteForm";
+import { LevelSlider } from "@/components/LevelSlider";
+import { ModelPicker } from "@/components/ModelPicker";
+import { RemoveReaderButton } from "@/components/RemoveReaderButton";
+import { listReaders } from "@/lib/admin";
+import { requireUser, type CurrentUser } from "@/lib/auth";
 import { getSpend, getTopAffinities } from "@/lib/feed";
-import { getPreferences, getSummaryConfig, monthlyBudget } from "@/lib/pipeline";
+import { getKeyForWriting, listKeys } from "@/lib/keys";
+import { getOpenRouterModels } from "@/lib/openrouter";
+import { getPreferences, monthlyBudget, summaryConfigFor } from "@/lib/pipeline";
 import { formatUsd } from "@/lib/pricing";
 import { CATEGORY_LABELS, SUMMARY_MODELS } from "@/lib/topics";
-import { FetchButton } from "@/components/FetchButton";
-import { LevelSlider } from "@/components/LevelSlider";
-import { savePreferences } from "../actions";
+import { savePreferences, signOut } from "../actions";
+import { relativeTime } from "@/lib/format";
 
 export const maxDuration = 300;
 
@@ -40,17 +49,70 @@ const hint = "mt-0.5 text-[13px] text-muted";
 
 async function Settings() {
   await connection();
-  const [prefs, affinities, config, spend] = await Promise.all([
-    getPreferences(),
-    getTopAffinities(),
-    getSummaryConfig(),
-    getSpend(),
+  const reader = await requireUser();
+  const [prefs, affinities, spend, keys, openrouterModels] = await Promise.all([
+    getPreferences(reader),
+    getTopAffinities(reader.id),
+    getSpend(reader.id),
+    listKeys(reader.id),
+    getOpenRouterModels(),
   ]);
+  const config = summaryConfigFor(prefs);
   const budget = monthlyBudget(prefs);
   const extra = prefs.categories.filter((c) => !(c in CATEGORY_LABELS));
+  const keyHint = (p: "anthropic" | "openrouter") => keys.find((k) => k.provider === p)?.hint ?? null;
+  // Admins can fall back to the deployment's own Anthropic key.
+  const canWrite = !!(await getKeyForWriting(reader.id, reader.email, config.provider));
 
   return (
     <main className="divide-y divide-line">
+      <section className="flex items-center justify-between gap-3 px-4 py-4">
+        <div className="min-w-0">
+          <h2 className={sectionTitle}>Signed in</h2>
+          <p className="truncate text-[13px] text-muted">
+            {reader.email}
+            {reader.isAdmin && " · admin"}
+          </p>
+        </div>
+        <form action={signOut}>
+          <button className="shrink-0 rounded-full border border-line px-3 py-1 text-[13px] font-medium transition hover:bg-raised active:scale-95">
+            Sign out
+          </button>
+        </form>
+      </section>
+
+      <section className="px-4 py-4">
+        <h2 className={sectionTitle}>Your API keys</h2>
+        <p className={hint}>
+          Threads are written with your own key, so you pay your provider directly. Keys are encrypted, never shown
+          again, and only used to write your threads. Setting a spending limit with your provider is a good idea.
+        </p>
+        {!canWrite && (
+          <p className="mt-2 rounded-lg bg-accent-soft px-3 py-2 text-[13px] text-accent">
+            Add a key for {config.provider === "anthropic" ? "Anthropic" : "OpenRouter"} (or switch provider below) to
+            start writing threads.
+          </p>
+        )}
+        <div className="mt-3 grid gap-2">
+          <ApiKeyForm
+            provider="anthropic"
+            label="Anthropic"
+            hint={keyHint("anthropic")}
+            placeholder="sk-ant-…"
+            help="From platform.claude.com → API keys."
+          />
+          <ApiKeyForm
+            provider="openrouter"
+            label="OpenRouter"
+            hint={keyHint("openrouter")}
+            placeholder="sk-or-…"
+            help="From openrouter.ai → Keys. One key for Claude, GPT, Gemini, Grok and more."
+          />
+        </div>
+      </section>
+
+      {reader.isAdmin && <AdminSection reader={reader} />}
+
       <section className="px-4 py-4">
         <h2 className={sectionTitle}>Add a paper</h2>
         <p className={hint}>
@@ -161,22 +223,17 @@ async function Settings() {
         <section className="px-4 py-4">
           <h2 className={sectionTitle}>Writing threads</h2>
           <p className={hint}>
-            Cheaper models are faster but less careful with nuance and numbers. Scheduled runs use the half-price batch API.
+            Cheaper models are faster but less careful with nuance and numbers. With Anthropic, the daily run uses the
+            half-price batch API.
           </p>
-          <div className="mt-3 grid gap-1">
-            {SUMMARY_MODELS.map((m) => (
-              <label key={m.id} className="flex items-center gap-3 rounded-lg px-1 py-1.5 text-[14px] hover:bg-raised">
-                <input
-                  type="radio"
-                  name="summaryModel"
-                  value={m.id}
-                  defaultChecked={config.model === m.id}
-                  className="size-4 accent-[var(--accent)]"
-                />
-                <span>{m.label}</span>
-                <span className="ml-auto text-[12.5px] text-muted">{m.note}</span>
-              </label>
-            ))}
+          <div className="mt-3">
+            <ModelPicker
+              provider={config.provider}
+              model={config.model}
+              anthropicModels={SUMMARY_MODELS}
+              openrouterModels={openrouterModels}
+              hasKey={{ anthropic: !!keyHint("anthropic") || reader.isAdmin, openrouter: !!keyHint("openrouter") }}
+            />
           </div>
           <fieldset className="mt-4">
             <legend className="text-[14px] font-medium">Effort</legend>
@@ -211,7 +268,9 @@ async function Settings() {
             />
             <span>
               Read the full PDF, figures included
-              <span className="block text-[12.5px] text-muted">About 3× the cost. Off reads the extracted text.</span>
+              <span className="block text-[12.5px] text-muted">
+                Anthropic only. About 3× the cost. Off reads the extracted text.
+              </span>
             </span>
           </label>
           <label className="mt-4 flex items-center justify-between text-[14px]">
@@ -244,7 +303,10 @@ async function Settings() {
           {spend.monthCount === 1 ? "" : "s"}
           {spend.count > 0 && <span className="text-muted"> · {formatUsd(spend.total / spend.count)} average</span>}
         </p>
-        <p className={hint}>Estimated from token usage at list prices.</p>
+        <p className={hint}>
+          Threads your key paid for, estimated from token usage at list prices (OpenRouter reports its own cost). Threads
+          someone else already wrote at your level are free.
+        </p>
       </section>
 
       <section className="px-4 py-4">
@@ -275,5 +337,39 @@ async function Settings() {
         </div>
       </section>
     </main>
+  );
+}
+
+async function AdminSection({ reader }: { reader: CurrentUser }) {
+  const readers = await listReaders();
+  return (
+    <section className="px-4 py-4">
+      <h2 className={sectionTitle}>Readers</h2>
+      <p className={hint}>
+        reresearch is invite only. Inviting someone creates their account and emails them a sign-in link; they add their
+        own API key.
+      </p>
+      <InviteForm />
+      <ul className="mt-4 divide-y divide-line rounded-xl border border-line">
+        {readers.map((r) => (
+          <li key={r.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-[13px]">
+            <div className="min-w-0">
+              <div className="truncate font-medium">{r.email}</div>
+              <div className="text-muted">
+                {r.lastSeen ? `seen ${relativeTime(r.lastSeen)} ago` : "hasn't signed in yet"}
+                {" · "}
+                {r.hasKey ? "has a key" : "no key"}
+                {r.monthSpend > 0 && ` · ${formatUsd(r.monthSpend)} this month`}
+              </div>
+            </div>
+            {r.id === reader.id ? (
+              <span className="text-[12.5px] text-muted">you</span>
+            ) : (
+              <RemoveReaderButton userId={r.id} email={r.email} />
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

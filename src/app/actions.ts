@@ -1,44 +1,66 @@
 "use server";
 
-import { and, eq, gt, inArray, lt, sql } from "drizzle-orm";
-import { cookies, headers } from "next/headers";
-import { redirect } from "next/navigation";
+import { eq } from "drizzle-orm";
 import { refresh } from "next/cache";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { after } from "next/server";
-import { SESSION_COOKIE, SESSION_MAX_AGE_S, authEnabled, createSessionToken, safeEqual } from "@/lib/auth";
+import { accountExists, ensureAccount, getAuth, requireUser } from "@/lib/auth";
+import { isAdmin } from "@/lib/auth-config";
 import { getDb, schema } from "@/lib/db";
-import type { Keyword } from "@/lib/db/schema";
+import type { Keyword, Provider } from "@/lib/db/schema";
 import { markRead, setFlag } from "@/lib/feed";
+import { deleteKey, PROVIDERS, saveKey } from "@/lib/keys";
+import {
+  canWrite,
+  collectBatches,
+  getPreferences,
+  ingest,
+  requestPapers,
+  rewriteForReader,
+  summariseByIds,
+} from "@/lib/pipeline";
 import { SUMMARY_MODELS } from "@/lib/topics";
-import { collectBatches, getPreferences, ingest, requestPapers, summariseByIds } from "@/lib/pipeline";
+
+type Result = { ok: boolean; message: string } | null;
 
 export async function toggleFlag(paperId: string, flag: "liked" | "saved" | "hidden", value: boolean) {
-  await setFlag(paperId, flag, value);
+  const reader = await requireUser();
+  await setFlag(reader.id, paperId, flag, value);
   refresh();
 }
 
 export async function markThreadRead(paperId: string) {
-  await markRead(paperId);
+  const reader = await requireUser();
+  await markRead(reader.id, paperId);
 }
 
-export type FetchState = { ok: boolean; message: string } | null;
+export type FetchState = Result;
 
 /**
  * Fetch and rank now (a few seconds) so the reader gets a real answer, then write the picks
  * up in the background; the feed shows them as they land.
  */
 export async function fetchPapers(): Promise<FetchState> {
+  const reader = await requireUser();
   try {
-    const report = await ingest({ defer: true });
+    const report = await ingest(reader, { defer: true });
     const picked = report.picked ?? [];
+    const found =
+      report.inserted === 0
+        ? "No new papers since the last fetch."
+        : `Found ${report.inserted} new paper${report.inserted === 1 ? "" : "s"}.`;
+    if (picked.length && !(await canWrite(reader))) {
+      refresh();
+      return { ok: true, message: `${found} Add your API key in Settings to have the best ones written up.` };
+    }
     if (picked.length) {
       after(async () => {
-        const result = await summariseByIds(picked);
-        console.log("[fetch]", JSON.stringify(result));
+        const result = await summariseByIds(reader, picked);
+        console.log("[fetch]", reader.id, JSON.stringify(result));
       });
     }
     refresh();
-    const found = report.inserted === 0 ? "No new papers since the last fetch." : `Found ${report.inserted} new paper${report.inserted === 1 ? "" : "s"}.`;
     const writing = picked.length
       ? ` Writing up the best ${picked.length}; they'll appear in For you within a minute or two.`
       : " Nothing left to write up.";
@@ -48,54 +70,61 @@ export async function fetchPapers(): Promise<FetchState> {
   }
 }
 
-export type AddPaperState = { ok: boolean; message: string } | null;
+export type AddPaperState = Result;
 
 export async function addPapers(_prev: AddPaperState, formData: FormData): Promise<AddPaperState> {
-  const raw = String(formData.get("papers") ?? "");
-  const inputs = raw.split(/[\s,]+/).filter(Boolean).slice(0, 10);
+  const reader = await requireUser();
+  const inputs = String(formData.get("papers") ?? "")
+    .split(/[\s,]+/)
+    .filter(Boolean)
+    .slice(0, 10);
   try {
-    const ids = await requestPapers(inputs);
+    const ids = await requestPapers(reader, inputs);
     after(async () => {
-      const report = await summariseByIds(ids);
-      console.log("[request]", JSON.stringify(report));
+      const report = await summariseByIds(reader, ids);
+      console.log("[request]", reader.id, JSON.stringify(report));
     });
     refresh();
-    return { ok: true, message: `Added ${ids.length} paper${ids.length === 1 ? "" : "s"}. Summarising now, it'll appear at the top of For you in a minute or two.` };
+    return {
+      ok: true,
+      message: `Added ${ids.length} paper${ids.length === 1 ? "" : "s"}. Writing now; it'll appear at the top of For you in a minute or two.`,
+    };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : String(err) };
   }
 }
 
-/** Write an existing thread again at the reader's current level; the new one replaces it when done. */
+/** Write a thread at the reader's current level, replacing any there; the page updates when done. */
 export async function rewriteThread(paperId: string) {
-  const db = await getDb();
-  const [paper] = await db
-    .update(schema.papers)
-    .set({ status: "new", error: null })
-    .where(and(eq(schema.papers.id, paperId), inArray(schema.papers.status, ["ready", "failed"])))
-    .returning({ id: schema.papers.id });
-  if (!paper) return;
-  after(async () => {
-    await summariseByIds([paperId]);
-  });
+  const reader = await requireUser();
+  after(() => rewriteForReader(reader, paperId));
   refresh();
 }
 
-/** Polled by the app while batched papers are waiting, so results show up without the next cron run. */
+/** Polled by the app while this reader's batched papers are waiting, so results show up before the next cron run. */
 export async function collectBatchResults() {
-  if ((await collectBatches()) > 0) refresh();
+  const reader = await requireUser();
+  if ((await collectBatches(reader.id)) > 0) refresh();
 }
 
 export async function summariseNow(paperId: string) {
-  after(async () => {
-    await summariseByIds([paperId]);
-  });
+  const reader = await requireUser();
   const db = await getDb();
-  await db.update(schema.papers).set({ requested: true }).where(eq(schema.papers.id, paperId));
+  await db
+    .insert(schema.userPapers)
+    .values({ userId: reader.id, paperId, requested: true })
+    .onConflictDoUpdate({
+      target: [schema.userPapers.userId, schema.userPapers.paperId],
+      set: { requested: true, updatedAt: new Date() },
+    });
+  after(() => summariseByIds(reader, [paperId]));
   refresh();
 }
 
+const OPENROUTER_MODEL = /^[a-z0-9-]+\/[a-z0-9.:_-]+$/i;
+
 export async function savePreferences(formData: FormData) {
+  const reader = await requireUser();
   const categories = formData
     .getAll("category")
     .map(String)
@@ -113,21 +142,31 @@ export async function savePreferences(formData: FormData) {
       return m ? { term: m[1].trim(), weight: Number(m[2]) } : { term: line, weight: 1 };
     });
   const summariesPerRun = Math.min(20, Math.max(1, Number(formData.get("summariesPerRun")) || 4));
-  const model = String(formData.get("summaryModel") ?? "");
+  const provider: Provider = formData.get("summaryProvider") === "openrouter" ? "openrouter" : "anthropic";
+  const anthropicModel = String(formData.get("summaryModel") ?? "");
+  const openrouterModel = String(formData.get("openrouterModel") ?? "").trim();
   const input = formData.get("summaryInput") === "pdf" ? "pdf" : "text";
   const effort = String(formData.get("summaryEffort") ?? "");
   const readingLevel = Math.round(Number(formData.get("readingLevel")));
   const budget = Number(formData.get("monthlyBudgetUsd"));
 
-  await getPreferences();
+  await getPreferences(reader);
   const db = await getDb();
   await db
-    .update(schema.preferences)
+    .update(schema.userSettings)
     .set({
-      categories: [...new Set(categories)],
-      keywords,
+      categories: [...new Set(categories)].slice(0, 30),
+      keywords: keywords.slice(0, 100),
       summariesPerRun,
-      summaryModel: SUMMARY_MODELS.some((m) => m.id === model) ? model : null,
+      summaryProvider: provider,
+      summaryModel:
+        provider === "openrouter"
+          ? OPENROUTER_MODEL.test(openrouterModel)
+            ? openrouterModel
+            : null
+          : SUMMARY_MODELS.some((m) => m.id === anthropicModel)
+            ? anthropicModel
+            : null,
       summaryInput: input,
       readingLevel: readingLevel >= 1 && readingLevel <= 6 ? readingLevel : 4,
       summaryEffort: effort === "low" || effort === "medium" || effort === "high" ? effort : null,
@@ -138,52 +177,92 @@ export async function savePreferences(formData: FormData) {
       },
       updatedAt: new Date(),
     })
-    .where(eq(schema.preferences.id, 1));
+    .where(eq(schema.userSettings.userId, reader.id));
   refresh();
 }
 
-const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const MAX_FAILURES_PER_IP = 8;
-const MAX_FAILURES_TOTAL = 40;
+// ---------------------------------------------------------------------------------------------
+// API keys
 
-export async function login(_prev: string | null, formData: FormData): Promise<string | null> {
-  if (!authEnabled()) redirect("/");
-  const ip = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-  const db = await getDb();
-  const { authFailures } = schema;
-  const since = new Date(Date.now() - LOGIN_WINDOW_MS);
-  const [counts] = await db
-    .select({
-      ip: sql<number>`count(*) filter (where ${authFailures.ip} = ${ip})::int`,
-      total: sql<number>`count(*)::int`,
-    })
-    .from(authFailures)
-    .where(gt(authFailures.at, since));
-  if (counts.ip >= MAX_FAILURES_PER_IP || counts.total >= MAX_FAILURES_TOTAL) {
-    return "Too many attempts. Try again in 15 minutes.";
+export async function saveApiKey(_prev: Result, formData: FormData): Promise<Result> {
+  const reader = await requireUser();
+  const provider = String(formData.get("provider")) as Provider;
+  if (!PROVIDERS.includes(provider)) return { ok: false, message: "Unknown provider" };
+  try {
+    await saveKey(reader.id, provider, String(formData.get("key") ?? ""));
+    refresh();
+    return { ok: true, message: "Key checked and saved." };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
   }
-
-  const password = String(formData.get("password") ?? "");
-  // Compare digests so the check takes the same time whatever the password's length.
-  if (!safeEqual(await sha256(password), await sha256(process.env.APP_PASSWORD ?? ""))) {
-    await db.insert(authFailures).values({ ip });
-    await db.delete(authFailures).where(lt(authFailures.at, new Date(Date.now() - 86_400_000)));
-    await new Promise((r) => setTimeout(r, 750));
-    return "Wrong password";
-  }
-
-  await db.delete(authFailures).where(eq(authFailures.ip, ip));
-  (await cookies()).set(SESSION_COOKIE, await createSessionToken(), {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    maxAge: SESSION_MAX_AGE_S,
-    path: "/",
-  });
-  redirect("/");
 }
 
-async function sha256(s: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-  return Buffer.from(digest).toString("hex");
+export async function removeApiKey(provider: Provider) {
+  const reader = await requireUser();
+  if (!PROVIDERS.includes(provider)) return;
+  await deleteKey(reader.id, provider);
+  refresh();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Sign-in and invites
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+async function sendLink(email: string) {
+  const auth = await getAuth();
+  await auth.api.signInMagicLink({ body: { email, callbackURL: "/" }, headers: await headers() });
+}
+
+/**
+ * Sends a sign-in link to existing accounts (and creates an admin's account on first use).
+ * The reply is the same whether or not the email has access, so it can't be used to probe.
+ */
+export async function requestSignInLink(_prev: Result, formData: FormData): Promise<Result> {
+  const email = String(formData.get("email") ?? "")
+    .trim()
+    .toLowerCase();
+  if (!EMAIL.test(email) || email.length > 200) return { ok: false, message: "Enter a valid email address." };
+  try {
+    if (isAdmin(email)) await ensureAccount(email);
+    if (await accountExists(email)) await sendLink(email);
+  } catch (err) {
+    console.error("[sign-in] couldn't send link", err);
+  }
+  return {
+    ok: true,
+    message: "If that email has access, a sign-in link is on its way. It works once and expires in 15 minutes.",
+  };
+}
+
+export async function signOut() {
+  const auth = await getAuth();
+  await auth.api.signOut({ headers: await headers() });
+  redirect("/login");
+}
+
+export async function inviteReader(_prev: Result, formData: FormData): Promise<Result> {
+  const reader = await requireUser();
+  if (!reader.isAdmin) return { ok: false, message: "Only admins can invite people." };
+  const email = String(formData.get("email") ?? "")
+    .trim()
+    .toLowerCase();
+  if (!EMAIL.test(email)) return { ok: false, message: "Enter a valid email address." };
+  try {
+    await ensureAccount(email);
+    await sendLink(email);
+    refresh();
+    return { ok: true, message: `Invited ${email}. They've been sent a sign-in link.` };
+  } catch (err) {
+    return { ok: false, message: `Account created, but the email failed: ${err instanceof Error ? err.message : err}` };
+  }
+}
+
+export async function removeReader(userId: string) {
+  const reader = await requireUser();
+  if (!reader.isAdmin || userId === reader.id) return;
+  const db = await getDb();
+  // Cascades to their sessions, settings, keys, likes and jobs; threads they paid for stay shared.
+  await db.delete(schema.user).where(eq(schema.user.id, userId));
+  refresh();
 }

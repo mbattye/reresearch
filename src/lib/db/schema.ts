@@ -6,8 +6,12 @@ import {
   pgTable,
   real,
   text,
+  primaryKey,
   timestamp,
 } from "drizzle-orm/pg-core";
+import { user } from "./auth-schema";
+
+export * from "./auth-schema";
 
 export type PaperStatus =
   | "new" // fetched, not yet chosen for summarising
@@ -84,9 +88,10 @@ export const papers = pgTable(
   ],
 );
 
+// One finished thread per paper and reading level, shared by every reader at that level.
 export const threads = pgTable("threads", {
   paperId: text("paper_id")
-    .primaryKey()
+    .notNull()
     .references(() => papers.id, { onDelete: "cascade" }),
   headline: text("headline").notNull(),
   hook: text("hook").notNull(),
@@ -105,9 +110,59 @@ export const threads = pgTable("threads", {
   batched: boolean("batched").notNull().default(false),
   // Reading level it was written at, 1 (Crayons) to 6 (Referee #2). (`level` above is the paper's own difficulty.)
   readingLevel: integer("reading_level").notNull().default(4),
+  // Whose key paid for it (null for threads from before accounts).
+  writtenBy: text("written_by").references(() => user.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [primaryKey({ columns: [t.paperId, t.readingLevel] }), index("threads_written_by_idx").on(t.writtenBy)]);
 
+/** A thread being written, queued in a batch, or failed, per paper and reading level. */
+export type JobStatus = "writing" | "batched" | "failed";
+
+export const threadJobs = pgTable(
+  "thread_jobs",
+  {
+    paperId: text("paper_id")
+      .notNull()
+      .references(() => papers.id, { onDelete: "cascade" }),
+    readingLevel: integer("reading_level").notNull(),
+    status: text("status").$type<JobStatus>().notNull(),
+    error: text("error"),
+    // Whose key is paying for it.
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    batchId: text("batch_id"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.paperId, t.readingLevel] }), index("thread_jobs_user_idx").on(t.userId)],
+);
+
+/** One reader's relationship with one paper: how well it matches them and what they did with it. */
+export const userPapers = pgTable(
+  "user_papers",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    paperId: text("paper_id")
+      .notNull()
+      .references(() => papers.id, { onDelete: "cascade" }),
+    // keyword/affinity interest for this reader + the paper's source boost
+    score: real("score").notNull().default(0),
+    scoreReasons: jsonb("score_reasons").$type<ScoreReason[]>().notNull().default([]),
+    // true when the reader asked for this paper rather than the ranker picking it
+    requested: boolean("requested").notNull().default(false),
+    liked: boolean("liked").notNull().default(false),
+    saved: boolean("saved").notNull().default(false),
+    hidden: boolean("hidden").notNull().default(false),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.paperId] }), index("user_papers_paper_idx").on(t.paperId)],
+);
+
+/** Legacy single-reader table, copied into the first admin's account on first sign-in. */
 export const interactions = pgTable("interactions", {
   paperId: text("paper_id")
     .primaryKey()
@@ -129,13 +184,13 @@ export interface SourceToggles {
   recommendations: boolean;
 }
 
-// Single row (id = 1) holding the reader's stated interests.
-export const preferences = pgTable("preferences", {
-  id: integer("id").primaryKey(),
+const settingsColumns = {
   categories: jsonb("categories").$type<string[]>().notNull(),
   keywords: jsonb("keywords").$type<Keyword[]>().notNull(),
   summariesPerRun: integer("summaries_per_run").notNull(),
-  // Null means use the SUMMARY_* environment defaults.
+  // Which of the reader's keys writes their threads; null = Anthropic.
+  summaryProvider: text("summary_provider").$type<Provider>(),
+  // Model id for that provider; null means the default (SUMMARY_MODEL for Anthropic).
   summaryModel: text("summary_model"),
   summaryInput: text("summary_input").$type<"text" | "pdf">(),
   summaryEffort: text("summary_effort").$type<"low" | "medium" | "high">(),
@@ -147,18 +202,66 @@ export const preferences = pgTable("preferences", {
     .notNull()
     .default({ inspireTrending: true, recommendations: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+};
+
+/** Each reader's interests and writing settings. */
+export const userSettings = pgTable("user_settings", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  ...settingsColumns,
 });
 
-// Learned from likes, saves and "less like this": thread tags gain or lose weight.
+/** Legacy single-reader settings (row id = 1), copied into the first admin's account on first sign-in. */
+export const preferences = pgTable("preferences", {
+  id: integer("id").primaryKey(),
+  ...settingsColumns,
+});
+
+// Learned per reader from likes, saves and "less like this": thread tags gain or lose weight.
+export const userTerms = pgTable(
+  "user_terms",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    term: text("term").notNull(),
+    weight: real("weight").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.term] })],
+);
+
+/** Legacy single-reader affinities, copied into the first admin's account on first sign-in. */
 export const termAffinity = pgTable("term_affinity", {
   term: text("term").primaryKey(),
   weight: real("weight").notNull().default(0),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export type Provider = "anthropic" | "openrouter";
+
+/** Readers' own API keys, encrypted with AES-256-GCM (see src/lib/keys.ts). Never sent to the browser. */
+export const userKeys = pgTable(
+  "user_keys",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    provider: text("provider").$type<Provider>().notNull(),
+    ciphertext: text("ciphertext").notNull(),
+    // Last four characters, to show which key is stored.
+    hint: text("hint").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.provider] })],
+);
+
 // One row per submitted Message Batch, so results can be collected on a later request.
 export const summaryBatches = pgTable("summary_batches", {
   id: text("id").primaryKey(),
+  userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
   paperIds: jsonb("paper_ids").$type<string[]>().notNull(),
   model: text("model").notNull(),
   readingLevel: integer("reading_level").notNull().default(4),
@@ -169,7 +272,7 @@ export const summaryBatches = pgTable("summary_batches", {
   collectedAt: timestamp("collected_at", { withTimezone: true }),
 });
 
-// Failed sign-ins, for throttling password guessing.
+// Legacy: failed sign-ins from the old shared-password gate. Unused since accounts; drop in a later migration.
 export const authFailures = pgTable(
   "auth_failures",
   {
@@ -183,5 +286,6 @@ export const authFailures = pgTable(
 export type Paper = typeof papers.$inferSelect;
 export type NewPaper = typeof papers.$inferInsert;
 export type Thread = typeof threads.$inferSelect;
-export type Interaction = typeof interactions.$inferSelect;
-export type Preferences = typeof preferences.$inferSelect;
+export type UserPaper = typeof userPapers.$inferSelect;
+export type Preferences = typeof userSettings.$inferSelect;
+export type ThreadJob = typeof threadJobs.$inferSelect;
