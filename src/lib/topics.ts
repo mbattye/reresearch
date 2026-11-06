@@ -1,7 +1,6 @@
 import type { Keyword } from "./db/schema";
 
-/** arXiv categories offered in settings. Any other valid arXiv category can be typed in too. */
-export const CATEGORY_LABELS: Record<string, string> = {
+const PHYSICS_CATEGORIES: Record<string, string> = {
   "hep-ex": "High energy physics: experiment",
   "hep-ph": "High energy physics: phenomenology",
   "hep-th": "High energy physics: theory",
@@ -20,6 +19,25 @@ export const CATEGORY_LABELS: Record<string, string> = {
   "physics.acc-ph": "Accelerator physics",
   "physics.ins-det": "Instrumentation & detectors",
 };
+
+const AI_CATEGORIES: Record<string, string> = {
+  "cs.AI": "Artificial intelligence",
+  "cs.LG": "Machine learning",
+  "stat.ML": "Machine learning (statistics)",
+  "cs.CL": "Language models & NLP",
+  "cs.CV": "Computer vision",
+  "cs.RO": "Robotics",
+  "cs.MA": "Multi-agent systems",
+  "cs.NE": "Neural & evolutionary computing",
+};
+
+/** arXiv categories offered in settings. Any other valid arXiv category can be typed in too. */
+export const CATEGORY_GROUPS = [
+  { name: "Physics", labels: PHYSICS_CATEGORIES },
+  { name: "AI", labels: AI_CATEGORIES },
+];
+
+export const CATEGORY_LABELS: Record<string, string> = { ...PHYSICS_CATEGORIES, ...AI_CATEGORIES };
 
 export const DEFAULT_CATEGORIES = [
   "hep-ex",
@@ -47,7 +65,30 @@ export const DEFAULT_KEYWORDS: Keyword[] = [
   { term: "quantum computing", weight: 1 },
 ];
 
+/** Offered in settings: AI categories post so much that ranking needs keywords to find anything. */
+export const AI_KEYWORDS: Keyword[] = [
+  // Bare "alignment" also matches detector alignment, and bare "agent" most of chemistry.
+  { term: "AI alignment", weight: 2 },
+  { term: "AI safety", weight: 2 },
+  { term: "AI agent", weight: 1.5 },
+  { term: "large language model", weight: 2 },
+  { term: "LLM", weight: 1.5 },
+  { term: "foundation model", weight: 1.5 },
+  { term: "mechanistic interpretability", weight: 2 },
+  { term: "interpretability", weight: 1.5 },
+  { term: "scaling law", weight: 1.5 },
+  { term: "reinforcement learning", weight: 1 },
+  { term: "diffusion model", weight: 1 },
+  { term: "world model", weight: 1 },
+  { term: "multimodal", weight: 1 },
+];
+
 export const DEFAULT_SUMMARIES_PER_RUN = 4;
+
+/** A keyword as written in the settings box, one per line. */
+export function keywordLine(k: Keyword): string {
+  return k.weight === 1 ? k.term : `${k.term}: ${k.weight}`;
+}
 
 export function categoryShort(cat: string | null | undefined): string {
   if (!cat) return "paper";

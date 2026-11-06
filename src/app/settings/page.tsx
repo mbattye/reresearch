@@ -5,6 +5,7 @@ import { AddPaperForm } from "@/components/AddPaperForm";
 import { BackIcon } from "@/components/icons";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { FetchButton } from "@/components/FetchButton";
+import { InterestsBox } from "@/components/InterestsBox";
 import { InviteForm } from "@/components/InviteForm";
 import { LevelSlider } from "@/components/LevelSlider";
 import { ModelPicker } from "@/components/ModelPicker";
@@ -16,7 +17,7 @@ import { getKeyForWriting, listKeys } from "@/lib/keys";
 import { getOpenRouterModels } from "@/lib/openrouter";
 import { getPreferences, monthlyBudget, summaryConfigFor } from "@/lib/pipeline";
 import { formatUsd } from "@/lib/pricing";
-import { CATEGORY_LABELS, SUMMARY_MODELS } from "@/lib/topics";
+import { CATEGORY_GROUPS, CATEGORY_LABELS, keywordLine, SUMMARY_MODELS } from "@/lib/topics";
 import { savePreferences, signOut } from "../actions";
 import { relativeTime } from "@/lib/format";
 
@@ -134,21 +135,26 @@ async function Settings() {
         <section className="px-4 py-4">
           <h2 className={sectionTitle}>arXiv categories</h2>
           <p className={hint}>New submissions in these categories are fetched on each run.</p>
-          <div className="mt-3 grid gap-1">
-            {Object.entries(CATEGORY_LABELS).map(([cat, label]) => (
-              <label key={cat} className="flex items-center gap-3 rounded-lg px-1 py-1.5 text-[14px] hover:bg-raised">
-                <input
-                  type="checkbox"
-                  name="category"
-                  value={cat}
-                  defaultChecked={prefs.categories.includes(cat)}
-                  className="size-4 accent-[var(--accent)]"
-                />
-                <span>{label}</span>
-                <span className="ml-auto font-mono text-[12px] text-muted">{cat}</span>
-              </label>
-            ))}
-          </div>
+          {CATEGORY_GROUPS.map((group) => (
+            <div key={group.name} className="mt-3">
+              <h3 className="px-1 text-[13px] font-medium text-muted">{group.name}</h3>
+              <div className="mt-1 grid gap-1">
+                {Object.entries(group.labels).map(([cat, label]) => (
+                  <label key={cat} className="flex items-center gap-3 rounded-lg px-1 py-1.5 text-[14px] hover:bg-raised">
+                    <input
+                      type="checkbox"
+                      name="category"
+                      value={cat}
+                      defaultChecked={prefs.categories.includes(cat)}
+                      className="size-4 accent-[var(--accent)]"
+                    />
+                    <span>{label}</span>
+                    <span className="ml-auto font-mono text-[12px] text-muted">{cat}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
           <label className="mt-3 block text-[13px] text-muted">
             Other categories (space separated)
             <input
@@ -201,12 +207,7 @@ async function Settings() {
           <p className={hint}>
             One per line. Optional weight after a colon (default 1; negative to steer away). Title matches count double.
           </p>
-          <textarea
-            name="keywords"
-            rows={10}
-            defaultValue={prefs.keywords.map((k) => (k.weight === 1 ? k.term : `${k.term}: ${k.weight}`)).join("\n")}
-            className="mt-3 w-full rounded-lg border border-line bg-bg px-3 py-2 font-mono text-[14px]"
-          />
+          <InterestsBox initial={prefs.keywords.map(keywordLine).join("\n")} />
           <label className="mt-3 flex items-center justify-between text-[14px]">
             Papers summarised per run
             <input

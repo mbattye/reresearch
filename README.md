@@ -2,7 +2,7 @@
 
 New research papers, read as threads. reresearch pulls fresh papers from arXiv, ranks them against your interests, and has Claude read the full PDF and write each one up as a short X-style thread: the finding, the context, the method, the numbers, the caveats and why it matters. It's built to be scrolled on a phone in spare moments.
 
-Starting focus: particle physics, quantum, and fusion energy. Any arXiv category works.
+Starting focus: particle physics, quantum, and fusion energy, with AI categories one tick away in Settings. Any arXiv category works.
 
 ## How it works
 

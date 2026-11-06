@@ -26,8 +26,19 @@ interface AtomEntry {
   "arxiv:journal_ref"?: string;
 }
 
-/** Newest submissions across the given categories. */
+// These archives post far more each day than physics. Asked for together, they'd fill every result.
+const BUSY_ARCHIVE = /^(cs|stat|eess)\./;
+
+/** Newest submissions across the given categories, with busy archives queried separately and given more room. */
 export async function fetchRecent(categories: string[], maxResults = 100): Promise<NewPaper[]> {
+  const busy = categories.filter((c) => BUSY_ARCHIVE.test(c));
+  const rest = categories.filter((c) => !BUSY_ARCHIVE.test(c));
+  const found = [...(await fetchNewest(rest, maxResults)), ...(await fetchNewest(busy, maxResults * 2))];
+  // A paper cross-listed in both groups comes back twice.
+  return [...new Map(found.map((p) => [p.id, p])).values()];
+}
+
+async function fetchNewest(categories: string[], maxResults: number): Promise<NewPaper[]> {
   if (categories.length === 0) return [];
   const query = categories.map((c) => `cat:${c}`).join(" OR ");
   const params = new URLSearchParams({
