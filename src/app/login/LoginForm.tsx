@@ -1,20 +1,24 @@
 "use client";
 
-import { useActionState } from "react";
-import { requestSignInLink } from "../actions";
+import { useActionState, useState } from "react";
+import { requestAccess, requestSignInLink } from "../actions";
 
 export function LoginForm() {
-  const [state, action, pending] = useActionState(requestSignInLink, null);
+  const [asking, setAsking] = useState(false);
+  const [signIn, signInAction, signingIn] = useActionState(requestSignInLink, null);
+  const [access, accessAction, requesting] = useActionState(requestAccess, null);
+  const state = asking ? access : signIn;
+  const pending = asking ? requesting : signingIn;
   if (state?.ok) {
     return (
       <div className="mt-6 rounded-2xl bg-accent-soft px-4 py-4 text-[15px] leading-snug text-accent" role="status">
-        <p className="font-semibold">Check your email</p>
+        <p className="font-semibold">{asking ? "Request received" : "Check your email"}</p>
         <p className="mt-1 text-[14px]">{state.message}</p>
       </div>
     );
   }
   return (
-    <form action={action} className="mt-6 space-y-3">
+    <form action={asking ? accessAction : signInAction} className="mt-6 space-y-3">
       <input
         type="email"
         name="email"
@@ -29,10 +33,15 @@ export function LoginForm() {
         disabled={pending}
         className="w-full rounded-full bg-fg py-2.5 text-[15px] font-semibold text-bg transition hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
       >
-        {pending ? "Sending…" : "Email me a sign-in link"}
+        {asking ? (pending ? "Sending…" : "Request access") : pending ? "Sending…" : "Email me a sign-in link"}
       </button>
       {state && !state.ok && <p className="text-[13px] text-like">{state.message}</p>}
-      <p className="text-[12.5px] text-muted">reresearch is invite only for now.</p>
+      <p className="text-[12.5px] text-muted">
+        {asking ? "Already have access? " : "reresearch is invite only for now. "}
+        <button type="button" onClick={() => setAsking(!asking)} className="font-medium text-accent hover:underline">
+          {asking ? "Sign in" : "Request access"}
+        </button>
+      </p>
     </form>
   );
 }

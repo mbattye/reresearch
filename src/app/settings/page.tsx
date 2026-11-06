@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { connection } from "next/server";
+import { AccessRequestRow } from "@/components/AccessRequestRow";
 import { AddPaperForm } from "@/components/AddPaperForm";
 import { BackIcon } from "@/components/icons";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
@@ -10,6 +11,7 @@ import { InviteForm } from "@/components/InviteForm";
 import { LevelSlider } from "@/components/LevelSlider";
 import { ModelPicker } from "@/components/ModelPicker";
 import { RemoveReaderButton } from "@/components/RemoveReaderButton";
+import { pendingRequests } from "@/lib/access";
 import { listReaders } from "@/lib/admin";
 import { requireUser, type CurrentUser } from "@/lib/auth";
 import { getSpend, getTopAffinities } from "@/lib/feed";
@@ -19,7 +21,7 @@ import { getPreferences, monthlyBudget, summaryConfigFor } from "@/lib/pipeline"
 import { formatUsd } from "@/lib/pricing";
 import { CATEGORY_GROUPS, CATEGORY_LABELS, keywordLine, SUMMARY_MODELS } from "@/lib/topics";
 import { savePreferences, signOut } from "../actions";
-import { relativeTime } from "@/lib/format";
+import { timeAgo } from "@/lib/format";
 
 export const maxDuration = 300;
 
@@ -342,7 +344,7 @@ async function Settings() {
 }
 
 async function AdminSection({ reader }: { reader: CurrentUser }) {
-  const readers = await listReaders();
+  const [readers, requests] = await Promise.all([listReaders(), pendingRequests()]);
   return (
     <section className="px-4 py-4">
       <h2 className={sectionTitle}>Readers</h2>
@@ -351,13 +353,23 @@ async function AdminSection({ reader }: { reader: CurrentUser }) {
         own API key.
       </p>
       <InviteForm />
+      {requests.length > 0 && (
+        <>
+          <h3 className="mt-4 px-1 text-[13px] font-medium text-muted">Asking for access</h3>
+          <ul className="mt-1 divide-y divide-line rounded-xl border border-line">
+            {requests.map((r) => (
+              <AccessRequestRow key={r.email} email={r.email} age={timeAgo(r.createdAt)} />
+            ))}
+          </ul>
+        </>
+      )}
       <ul className="mt-4 divide-y divide-line rounded-xl border border-line">
         {readers.map((r) => (
           <li key={r.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-[13px]">
             <div className="min-w-0">
               <div className="truncate font-medium">{r.email}</div>
               <div className="text-muted">
-                {r.lastSeen ? `seen ${relativeTime(r.lastSeen)} ago` : "hasn't signed in yet"}
+                {r.lastSeen ? `seen ${timeAgo(r.lastSeen)}` : "hasn't signed in yet"}
                 {" · "}
                 {r.hasKey ? "has a key" : "no key"}
                 {r.monthSpend > 0 && ` · ${formatUsd(r.monthSpend)} this month`}

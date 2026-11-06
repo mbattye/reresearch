@@ -5,6 +5,7 @@ import { refresh } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
+import { allowAttempt, clearRequest, clientIp, declineRequest, recordRequest } from "@/lib/access";
 import { accountExists, ensureAccount, getAuth, requireUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth-config";
 import { getDb, schema } from "@/lib/db";
@@ -209,9 +210,12 @@ export async function removeApiKey(provider: Provider) {
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-async function sendLink(email: string) {
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+
+async function sendLink(email: string, invite = false) {
   const auth = await getAuth();
-  await auth.api.signInMagicLink({ body: { email, callbackURL: "/" }, headers: await headers() });
+  await auth.api.signInMagicLink({ body: { email, callbackURL: "/", metadata: { invite } }, headers: await headers() });
 }
 
 /**
@@ -224,8 +228,12 @@ export async function requestSignInLink(_prev: Result, formData: FormData): Prom
     .toLowerCase();
   if (!EMAIL.test(email) || email.length > 200) return { ok: false, message: "Enter a valid email address." };
   try {
-    if (isAdmin(email)) await ensureAccount(email);
-    if (await accountExists(email)) await sendLink(email);
+    const ip = clientIp(await headers());
+    const allowed = (await allowAttempt(`sign-in:${ip}`, 10, HOUR)) && (await allowAttempt(`link:${email}`, 3, 15 * MINUTE));
+    if (allowed) {
+      if (isAdmin(email)) await ensureAccount(email);
+      if (await accountExists(email)) await sendLink(email);
+    }
   } catch (err) {
     console.error("[sign-in] couldn't send link", err);
   }
@@ -233,6 +241,22 @@ export async function requestSignInLink(_prev: Result, formData: FormData): Prom
     ok: true,
     message: "If that email has access, a sign-in link is on its way. It works once and expires in 15 minutes.",
   };
+}
+
+/** Puts the email on the waitlist. The reply never changes, so it can't show who's a member or who was declined. */
+export async function requestAccess(_prev: Result, formData: FormData): Promise<Result> {
+  const email = String(formData.get("email") ?? "")
+    .trim()
+    .toLowerCase();
+  if (!EMAIL.test(email) || email.length > 200) return { ok: false, message: "Enter a valid email address." };
+  try {
+    if (await allowAttempt(`access:${clientIp(await headers())}`, 5, HOUR)) {
+      if (!(await accountExists(email))) await recordRequest(email);
+    }
+  } catch (err) {
+    console.error("[access] couldn't record request", err);
+  }
+  return { ok: true, message: "If you're approved, we'll email you an invite." };
 }
 
 export async function signOut() {
@@ -250,12 +274,34 @@ export async function inviteReader(_prev: Result, formData: FormData): Promise<R
   if (!EMAIL.test(email)) return { ok: false, message: "Enter a valid email address." };
   try {
     await ensureAccount(email);
-    await sendLink(email);
+    await sendLink(email, true);
+    await clearRequest(email);
     refresh();
     return { ok: true, message: `Invited ${email}. They've been sent a sign-in link.` };
   } catch (err) {
     return { ok: false, message: `Account created, but the email failed: ${err instanceof Error ? err.message : err}` };
   }
+}
+
+export async function approveRequest(email: string): Promise<Result> {
+  const reader = await requireUser();
+  if (!reader.isAdmin) return { ok: false, message: "Only admins can approve requests." };
+  try {
+    await ensureAccount(email);
+    await sendLink(email, true);
+    await clearRequest(email);
+    refresh();
+    return { ok: true, message: `Invited ${email}.` };
+  } catch (err) {
+    return { ok: false, message: `The invite failed: ${err instanceof Error ? err.message : err}` };
+  }
+}
+
+export async function rejectRequest(email: string) {
+  const reader = await requireUser();
+  if (!reader.isAdmin) return;
+  await declineRequest(email);
+  refresh();
 }
 
 export async function removeReader(userId: string) {

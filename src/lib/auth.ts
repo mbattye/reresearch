@@ -6,17 +6,11 @@ import { magicLink } from "better-auth/plugins";
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { isAdmin } from "./auth-config";
+import { baseURL, isAdmin } from "./auth-config";
 import { getDb, schema } from "./db";
-import { sendSignInEmail } from "./email";
+import { sendInviteEmail, sendSignInEmail } from "./email";
 
 const SESSION_DAYS = 90;
-
-function baseURL(): string {
-  if (process.env.BETTER_AUTH_URL) return process.env.BETTER_AUTH_URL;
-  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
-  return "http://localhost:3000";
-}
 
 async function createAuth() {
   const secret = process.env.BETTER_AUTH_SECRET;
@@ -30,13 +24,16 @@ async function createAuth() {
       schema: { user: schema.user, session: schema.session, account: schema.account, verification: schema.verification },
     }),
     session: { expiresIn: 60 * 60 * 24 * SESSION_DAYS, updateAge: 60 * 60 * 24 },
+    // Links are only sent by our server actions, which rate limit. Over HTTP this would email any address.
+    disabledPaths: ["/sign-in/magic-link"],
     plugins: [
       magicLink({
         // Invite only: links go to existing accounts. Invites (and an admin's first sign-in) create the account.
         disableSignUp: true,
         expiresIn: 15 * 60,
-        sendMagicLink: async ({ email, url }) => {
-          await sendSignInEmail(email, url);
+        sendMagicLink: async ({ email, url, metadata }) => {
+          if (!(await accountExists(email))) return;
+          await (metadata?.invite ? sendInviteEmail(email, url) : sendSignInEmail(email, url));
         },
       }),
       // Lets server actions set and clear the session cookie (must be last).

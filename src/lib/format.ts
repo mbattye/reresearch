@@ -7,6 +7,13 @@ export function relativeTime(date: Date, now = new Date()): string {
   return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: now.getFullYear() === date.getFullYear() ? undefined : "numeric" });
 }
 
+/** For sentences: "just now", "5m ago", "on 3 Nov". */
+export function timeAgo(date: Date, now = new Date()): string {
+  const short = relativeTime(date, now);
+  if (short === "now") return "just now";
+  return /^\d+[mhd]$/.test(short) ? `${short} ago` : `on ${short}`;
+}
+
 export function authorLine(authors: string[]): string {
   if (authors.length === 0) return "Unknown authors";
   if (authors.length === 1) return authors[0];

@@ -43,6 +43,13 @@
       "when": 1793914350997,
       "tag": "0005_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794005266646,
+      "tag": "0006_access_requests",
+      "breakpoints": true
     }
   ]
 }

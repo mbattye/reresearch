@@ -54,7 +54,7 @@ Every thread page has an "Original paper" block: the full author list (or the co
 ## Accounts
 
 - **Sign-in** is by emailed link (Better Auth's magic-link plugin, emails via Resend). There are no passwords.
-- **Invite only.** Admins (`ADMIN_EMAILS`) invite people from Settings, which creates their account and emails a link. Sign-up is otherwise switched off, and the sign-in form gives the same reply whether or not an email has access.
+- **Invite only, with a waitlist.** Admins (`ADMIN_EMAILS`) invite people from Settings, which creates their account and emails a link. Anyone else can request access from the login page: requests appear in Settings to approve or decline, and the daily run emails admins a digest of new ones. Nothing is sent to the person until they're approved. Sign-up is otherwise switched off, sign-in and requests are rate limited, and both forms give the same reply whether or not an email has access.
 - **Readers bring their own key** for Anthropic or OpenRouter (Claude, GPT, Gemini, Grok and others). Keys are checked with a free request, encrypted with AES-256-GCM bound to the reader's id, decrypted only to make a call, and never sent back to the browser (Settings shows `…a1b2`). Admins can fall back to the deployment's `ANTHROPIC_API_KEY`.
 - **What's shared and what isn't.** Papers and threads are shared: a thread is written once per paper and reading level, by whoever's key gets there first, and is free for everyone else at that level. Interests, likes, saves, learned ranking, the queue, budget and spend are per reader.
 - **Before accounts**, everything belonged to one reader; the first admin to sign in inherits it.

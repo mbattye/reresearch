@@ -8,6 +8,13 @@ export function missingProductionConfig(): string[] {
   return REQUIRED_IN_PRODUCTION.filter((k) => !process.env[k]);
 }
 
+/** Where the app is served from, which links in emails point to. */
+export function baseURL(): string {
+  if (process.env.BETTER_AUTH_URL) return process.env.BETTER_AUTH_URL;
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  return "http://localhost:3000";
+}
+
 export function adminEmails(): string[] {
   return (process.env.ADMIN_EMAILS ?? "")
     .split(",")

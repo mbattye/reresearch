@@ -1,3 +1,4 @@
+import { sendRequestDigest } from "@/lib/access";
 import { safeEqual } from "@/lib/auth-config";
 import { activeReaders } from "@/lib/feed";
 import { collectBatches, ingest } from "@/lib/pipeline";
@@ -12,6 +13,11 @@ export async function GET(request: Request) {
   if (!secret || !safeEqual(auth, `Bearer ${secret}`)) {
     return new Response("Unauthorized", { status: 401 });
   }
+  // First, and on its own, so a slow or failed reader can't hold up the admins' digest.
+  const digest = await sendRequestDigest().catch((err) => {
+    console.error("[cron] digest failed", err);
+    return null;
+  });
   try {
     const collected = await collectBatches();
     const readers = await activeReaders();
@@ -28,7 +34,7 @@ export async function GET(request: Request) {
         results[reader.id] = { error: err instanceof Error ? err.message : String(err) };
       }
     }
-    return Response.json({ collected, readers: readers.length, results });
+    return Response.json({ digest, collected, readers: readers.length, results });
   } catch (err) {
     console.error("[cron] run failed", err);
     return Response.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });

@@ -272,6 +272,27 @@ export const summaryBatches = pgTable("summary_batches", {
   collectedAt: timestamp("collected_at", { withTimezone: true }),
 });
 
+/** People asking for access from the login page; an admin approves or declines them in Settings. */
+export const accessRequests = pgTable("access_requests", {
+  email: text("email").primaryKey(),
+  // Approved requests are deleted; declined ones stay so asking again changes nothing.
+  status: text("status").$type<"pending" | "declined">().notNull().default("pending"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // When the admins' daily digest mentioned this request.
+  notifiedAt: timestamp("notified_at", { withTimezone: true }),
+});
+
+/** Recent sign-in and access requests. Rate limits live here because serverless instances share no memory. */
+export const authAttempts = pgTable(
+  "auth_attempts",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    key: text("key").notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("auth_attempts_key_at_idx").on(t.key, t.at)],
+);
+
 // Legacy: failed sign-ins from the old shared-password gate. Unused since accounts; drop in a later migration.
 export const authFailures = pgTable(
   "auth_failures",
@@ -289,3 +310,4 @@ export type Thread = typeof threads.$inferSelect;
 export type UserPaper = typeof userPapers.$inferSelect;
 export type Preferences = typeof userSettings.$inferSelect;
 export type ThreadJob = typeof threadJobs.$inferSelect;
+export type AccessRequest = typeof accessRequests.$inferSelect;
