@@ -11,7 +11,7 @@ import { isAdmin } from "@/lib/auth-config";
 import { getDb, schema } from "@/lib/db";
 import type { Keyword, Provider } from "@/lib/db/schema";
 import { markRead, setFlag } from "@/lib/feed";
-import { deleteKey, PROVIDERS, saveKey } from "@/lib/keys";
+import { deleteKey, saveKey } from "@/lib/keys";
 import {
   canWrite,
   collectBatches,
@@ -21,7 +21,8 @@ import {
   rewriteForReader,
   summariseByIds,
 } from "@/lib/pipeline";
-import { SUMMARY_MODELS } from "@/lib/topics";
+import { PROVIDERS } from "@/lib/providers";
+import { OPENAI_MODELS, SUMMARY_MODELS } from "@/lib/topics";
 
 type Result = { ok: boolean; message: string } | null;
 
@@ -124,6 +125,10 @@ export async function summariseNow(paperId: string) {
 
 const OPENROUTER_MODEL = /^[a-z0-9-]+\/[a-z0-9.:_-]+$/i;
 
+function knownProvider(value: unknown): Provider | null {
+  return PROVIDERS.find((p) => p.id === value)?.id ?? null;
+}
+
 export async function savePreferences(formData: FormData) {
   const reader = await requireUser();
   const categories = formData
@@ -143,8 +148,8 @@ export async function savePreferences(formData: FormData) {
       return m ? { term: m[1].trim(), weight: Number(m[2]) } : { term: line, weight: 1 };
     });
   const summariesPerRun = Math.min(20, Math.max(1, Number(formData.get("summariesPerRun")) || 4));
-  const provider: Provider = formData.get("summaryProvider") === "openrouter" ? "openrouter" : "anthropic";
-  const anthropicModel = String(formData.get("summaryModel") ?? "");
+  const provider = knownProvider(formData.get("summaryProvider")) ?? "anthropic";
+  const listedModel = String(formData.get("summaryModel") ?? "");
   const openrouterModel = String(formData.get("openrouterModel") ?? "").trim();
   const input = formData.get("summaryInput") === "pdf" ? "pdf" : "text";
   const effort = String(formData.get("summaryEffort") ?? "");
@@ -165,8 +170,8 @@ export async function savePreferences(formData: FormData) {
           ? OPENROUTER_MODEL.test(openrouterModel)
             ? openrouterModel
             : null
-          : SUMMARY_MODELS.some((m) => m.id === anthropicModel)
-            ? anthropicModel
+          : (provider === "openai" ? OPENAI_MODELS : SUMMARY_MODELS).some((m) => m.id === listedModel)
+            ? listedModel
             : null,
       summaryInput: input,
       readingLevel: readingLevel >= 1 && readingLevel <= 6 ? readingLevel : 4,
@@ -187,10 +192,18 @@ export async function savePreferences(formData: FormData) {
 
 export async function saveApiKey(_prev: Result, formData: FormData): Promise<Result> {
   const reader = await requireUser();
-  const provider = String(formData.get("provider")) as Provider;
-  if (!PROVIDERS.includes(provider)) return { ok: false, message: "Unknown provider" };
+  const provider = knownProvider(formData.get("provider"));
+  if (!provider) return { ok: false, message: "Unknown provider" };
   try {
     await saveKey(reader.id, provider, String(formData.get("key") ?? ""));
+    // A first key should just work, whichever provider it's for.
+    if (!(await canWrite(reader))) {
+      const db = await getDb();
+      await db
+        .update(schema.userSettings)
+        .set({ summaryProvider: provider, summaryModel: null, updatedAt: new Date() })
+        .where(eq(schema.userSettings.userId, reader.id));
+    }
     refresh();
     return { ok: true, message: "Key checked and saved." };
   } catch (err) {
@@ -200,8 +213,18 @@ export async function saveApiKey(_prev: Result, formData: FormData): Promise<Res
 
 export async function removeApiKey(provider: Provider) {
   const reader = await requireUser();
-  if (!PROVIDERS.includes(provider)) return;
+  if (!knownProvider(provider)) return;
   await deleteKey(reader.id, provider);
+  refresh();
+}
+
+export async function dismissWelcome() {
+  const reader = await requireUser();
+  const db = await getDb();
+  await db
+    .update(schema.userSettings)
+    .set({ welcomedAt: new Date() })
+    .where(eq(schema.userSettings.userId, reader.id));
   refresh();
 }
 

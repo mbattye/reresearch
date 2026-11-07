@@ -10,8 +10,6 @@ import type { Provider } from "./db/schema";
 // random string; it's hashed to 32 bytes). A key is decrypted only to make a model call, never
 // logged, and never sent back to the browser: the UI only ever sees the provider and a hint.
 
-export const PROVIDERS: Provider[] = ["anthropic", "openrouter"];
-
 function masterKey(): Buffer {
   const secret = process.env.KEY_ENCRYPTION_SECRET;
   if (!secret) {
@@ -79,6 +77,17 @@ export async function deleteKey(userId: string, provider: Provider): Promise<voi
     .where(and(eq(schema.userKeys.userId, userId), eq(schema.userKeys.provider, provider)));
 }
 
+/** Whether getKeyForWriting would find a key, without decrypting it or marking it used. */
+export async function hasKeyFor(userId: string, email: string, provider: Provider): Promise<boolean> {
+  if (provider === "anthropic" && isAdmin(email) && process.env.ANTHROPIC_API_KEY) return true;
+  const db = await getDb();
+  const [row] = await db
+    .select({ provider: schema.userKeys.provider })
+    .from(schema.userKeys)
+    .where(and(eq(schema.userKeys.userId, userId), eq(schema.userKeys.provider, provider)));
+  return !!row;
+}
+
 /**
  * The key to write with: the reader's own, or for admins the deployment's ANTHROPIC_API_KEY
  * as a fallback. Null when the reader has no usable key for this provider.
@@ -113,6 +122,22 @@ async function verifyKey(provider: Provider, key: string) {
       throw new Error("Couldn't check the key with Anthropic; try again");
     }
   }
+  if (provider === "openai") {
+    // Listing models is free and needs a valid key.
+    const res = await fetch("https://api.openai.com/v1/models", {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.ok) return;
+    if (res.status === 401 || res.status === 403) {
+      const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+      if (/scope|permission/i.test(body.error?.message ?? "")) {
+        throw new Error("That restricted key needs read access to Models and write access to Responses");
+      }
+      throw new Error("OpenAI rejected that key");
+    }
+    throw new Error(`Couldn't check the key with OpenAI (${res.status}); try again`);
+  }
   // OpenRouter's key endpoint returns the key's own limits; 401 when invalid.
   const res = await fetch("https://openrouter.ai/api/v1/key", {
     headers: { Authorization: `Bearer ${key}` },
@@ -120,8 +145,4 @@ async function verifyKey(provider: Provider, key: string) {
   });
   if (res.status === 401 || res.status === 403) throw new Error("OpenRouter rejected that key");
   if (!res.ok) throw new Error(`Couldn't check the key with OpenRouter (${res.status}); try again`);
-}
-
-export function label(provider: Provider): string {
-  return provider === "anthropic" ? "Anthropic" : "OpenRouter";
 }

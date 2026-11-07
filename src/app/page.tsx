@@ -6,9 +6,10 @@ import { BatchCollector } from "@/components/BatchCollector";
 import { Header } from "@/components/Header";
 import { PostCard } from "@/components/PostCard";
 import { QueueList } from "@/components/QueueList";
+import { Welcome } from "@/components/Welcome";
 import { requireUser } from "@/lib/auth";
 import { getFeed, getJobCounts, getQueue, type FeedTab } from "@/lib/feed";
-import { getPreferences } from "@/lib/pipeline";
+import { canWrite, getPreferences, summaryConfigFor } from "@/lib/pipeline";
 import { FetchButton } from "@/components/FetchButton";
 
 export const maxDuration = 300;
@@ -28,14 +29,19 @@ async function HomeContent({ searchParams }: Pick<PageProps<"/">, "searchParams"
   const raw = (await searchParams).tab;
   const tab = TAB_IDS.includes(raw as FeedTab) ? (raw as FeedTab) : "foryou";
   const reader = await requireUser();
-  const { readingLevel } = await getPreferences(reader);
-  const counts = await getJobCounts(reader.id);
+  const prefs = await getPreferences(reader);
+  const { readingLevel } = prefs;
+  const [counts, hasKey] = await Promise.all([
+    getJobCounts(reader.id),
+    canWrite(reader, summaryConfigFor(prefs).provider),
+  ]);
   const writing = counts.writing ?? 0;
   const summarising = writing > 0;
 
   return (
     <>
       <Header tab={tab} />
+      {!prefs.welcomedAt && <Welcome hasKey={hasKey} />}
       <AutoRefresh active={summarising || tab === "queue"} />
       <BatchCollector active={(counts.batched ?? 0) > 0} />
       {summarising && tab !== "queue" && (
@@ -46,15 +52,25 @@ async function HomeContent({ searchParams }: Pick<PageProps<"/">, "searchParams"
       {tab === "queue" ? (
         <Queue userId={reader.id} level={readingLevel} />
       ) : (
-        <Feed userId={reader.id} level={readingLevel} tab={tab} />
+        <Feed userId={reader.id} level={readingLevel} tab={tab} hasKey={hasKey} />
       )}
     </>
   );
 }
 
-async function Feed({ userId, level, tab }: { userId: string; level: number; tab: Exclude<FeedTab, "queue"> }) {
+async function Feed({
+  userId,
+  level,
+  tab,
+  hasKey,
+}: {
+  userId: string;
+  level: number;
+  tab: Exclude<FeedTab, "queue">;
+  hasKey: boolean;
+}) {
   const items = await getFeed(userId, level, tab);
-  if (items.length === 0) return <EmptyState tab={tab} />;
+  if (items.length === 0) return <EmptyState tab={tab} hasKey={hasKey} />;
   return (
     <main>
       {items.map((item) => (
@@ -84,9 +100,26 @@ async function Queue({ userId, level }: { userId: string; level: number }) {
   );
 }
 
-function EmptyState({ tab }: { tab: FeedTab }) {
+function EmptyState({ tab, hasKey }: { tab: FeedTab; hasKey: boolean }) {
   if (tab === "saved") {
     return <p className="px-6 py-16 text-center text-[15px] text-muted">Nothing saved yet. Tap the bookmark on a post to keep it here.</p>;
+  }
+  if (!hasKey) {
+    return (
+      <div className="px-6 py-16 text-center">
+        <p className="text-[17px] font-semibold">Add an API key to get started</p>
+        <p className="mt-1 text-[14px] text-muted">
+          Threads are written with your own Anthropic, OpenAI or OpenRouter key, so your feed stays empty until you add
+          one.
+        </p>
+        <Link
+          href="/settings"
+          className="mt-5 inline-block rounded-full bg-fg px-4 py-1.5 text-[13px] font-semibold text-bg transition hover:opacity-85 active:scale-95"
+        >
+          Add a key in Settings
+        </Link>
+      </div>
+    );
   }
   return (
     <div className="px-6 py-16 text-center">

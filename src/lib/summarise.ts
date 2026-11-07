@@ -24,6 +24,7 @@ export const EFFORTS: Effort[] = ["low", "medium", "high"];
 
 export const DEFAULT_MODELS: Record<Provider, string> = {
   anthropic: process.env.SUMMARY_MODEL ?? "claude-sonnet-5-5",
+  openai: "gpt-6.1-sol",
   openrouter: "anthropic/claude-sonnet-5.5",
 };
 
@@ -217,8 +218,9 @@ export function parseThread(message: Anthropic.Message): GeneratedThread {
 }
 
 export async function summarisePaper(paper: Paper, config: SummaryConfig, apiKey: string): Promise<SummaryResult> {
-  // OpenRouter gets the extracted text only; whole-PDF input is an Anthropic feature here.
-  const material = await prepareMaterial(paper, config.provider === "openrouter" ? { ...config, input: "text" } : config);
+  // Other providers get the extracted text only; whole-PDF input is an Anthropic feature here.
+  const material = await prepareMaterial(paper, config.provider === "anthropic" ? config : { ...config, input: "text" });
+  if (config.provider === "openai") return summariseViaOpenAI(paper, material, config, apiKey);
   if (config.provider === "openrouter") return summariseViaOpenRouter(paper, material, config, apiKey);
 
   const params = buildParams(paper, material, config);
@@ -245,6 +247,65 @@ export async function summarisePaper(paper: Paper, config: SummaryConfig, apiKey
     inputTokens,
     outputTokens: message.usage.output_tokens,
     costUsd: costUsd({ model: message.model, inputTokens, outputTokens: message.usage.output_tokens }),
+    institutions: material.institutions,
+  };
+}
+
+interface OpenAIResponse {
+  model?: string;
+  status?: string;
+  incomplete_details?: { reason?: string } | null;
+  output?: { type: string; content?: { type: string; text?: string; refusal?: string }[] }[];
+  usage?: { input_tokens: number; output_tokens: number };
+  error?: { message: string; code?: string } | null;
+}
+
+/** OpenAI's Responses API, with the thread schema enforced. Reasoning tokens count as output. */
+async function summariseViaOpenAI(
+  paper: Paper,
+  material: Material,
+  config: SummaryConfig,
+  apiKey: string,
+): Promise<SummaryResult> {
+  const format = zodOutputFormat(ThreadSchema);
+  const res = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: config.model,
+      max_output_tokens: 32000,
+      reasoning: { effort: config.effort },
+      // Responses are kept for 30 days by default; nothing here needs them afterwards.
+      store: false,
+      instructions: systemPrompt(config.level),
+      input: paperBrief(paper, material),
+      text: { format: { type: "json_schema", name: "thread", strict: true, schema: format.schema } },
+    }),
+    signal: AbortSignal.timeout(280_000),
+  });
+  const body = (await res.json().catch(() => ({}))) as OpenAIResponse;
+  if (res.status === 401) throw new Error("OpenAI rejected the API key. Update it in Settings.");
+  if (body.error?.code === "insufficient_quota") throw new Error("Your OpenAI account is out of credit.");
+  if (!res.ok || body.error) throw new Error(`OpenAI: ${body.error?.message ?? res.status}`);
+
+  if (body.incomplete_details?.reason === "max_output_tokens") throw new Error("Summary was cut off at max_tokens");
+  const parts = body.output?.flatMap((item) => (item.type === "message" ? (item.content ?? []) : [])) ?? [];
+  const refusal = parts.find((p) => p.type === "refusal");
+  if (refusal) throw new Error(`Model declined to summarise (${refusal.refusal ?? "no reason given"})`);
+  const text = parts.find((p) => p.type === "output_text")?.text;
+  if (!text) throw new Error(`OpenAI returned an empty response (${body.incomplete_details?.reason ?? body.status})`);
+
+  const model = body.model ?? config.model;
+  const inputTokens = body.usage?.input_tokens ?? 0;
+  const outputTokens = body.usage?.output_tokens ?? 0;
+  return {
+    thread: normalise(format.parse(text)),
+    level: config.level,
+    inputMode: material.mode,
+    model,
+    inputTokens,
+    outputTokens,
+    costUsd: costUsd({ model, inputTokens, outputTokens }),
     institutions: material.institutions,
   };
 }

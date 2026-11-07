@@ -1,4 +1,4 @@
-// USD per million tokens, Anthropic first-party list prices. Batch requests are half price.
+// USD per million tokens, first-party list prices. Anthropic batch requests are half price.
 const PRICES: Record<string, { input: number; output: number }> = {
   "claude-fable-5-1": { input: 10, output: 50 },
   "claude-opus-5-5": { input: 4, output: 20 },
@@ -6,6 +6,10 @@ const PRICES: Record<string, { input: number; output: number }> = {
   "claude-sonnet-5-5": { input: 2, output: 10 },
   "claude-sonnet-5": { input: 2, output: 10 },
   "claude-haiku-5-5": { input: 0.1, output: 0.5 },
+  // OpenAI charges more above 272k input tokens, which papers capped at 80k characters never reach.
+  "gpt-6.1-sol": { input: 2, output: 10 },
+  "gpt-6.1-terra": { input: 1, output: 5 },
+  "gpt-6-luna": { input: 0.1, output: 0.5 },
 };
 
 // Claude Haiku 5.5 charges more for prompts over 100k tokens.

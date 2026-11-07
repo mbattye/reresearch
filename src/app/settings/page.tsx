@@ -15,11 +15,13 @@ import { pendingRequests } from "@/lib/access";
 import { listReaders } from "@/lib/admin";
 import { requireUser, type CurrentUser } from "@/lib/auth";
 import { getSpend, getTopAffinities } from "@/lib/feed";
-import { getKeyForWriting, listKeys } from "@/lib/keys";
+import type { Provider } from "@/lib/db/schema";
+import { hasKeyFor, listKeys } from "@/lib/keys";
 import { getOpenRouterModels } from "@/lib/openrouter";
 import { getPreferences, monthlyBudget, summaryConfigFor } from "@/lib/pipeline";
 import { formatUsd } from "@/lib/pricing";
-import { CATEGORY_GROUPS, CATEGORY_LABELS, keywordLine, SUMMARY_MODELS } from "@/lib/topics";
+import { providerLabel, PROVIDERS } from "@/lib/providers";
+import { CATEGORY_GROUPS, CATEGORY_LABELS, keywordLine, OPENAI_MODELS, SUMMARY_MODELS } from "@/lib/topics";
 import { savePreferences, signOut } from "../actions";
 import { timeAgo } from "@/lib/format";
 
@@ -63,9 +65,9 @@ async function Settings() {
   const config = summaryConfigFor(prefs);
   const budget = monthlyBudget(prefs);
   const extra = prefs.categories.filter((c) => !(c in CATEGORY_LABELS));
-  const keyHint = (p: "anthropic" | "openrouter") => keys.find((k) => k.provider === p)?.hint ?? null;
+  const keyHint = (p: Provider) => keys.find((k) => k.provider === p)?.hint ?? null;
   // Admins can fall back to the deployment's own Anthropic key.
-  const canWrite = !!(await getKeyForWriting(reader.id, reader.email, config.provider));
+  const canWrite = await hasKeyFor(reader.id, reader.email, config.provider);
 
   return (
     <main className="divide-y divide-line">
@@ -92,25 +94,13 @@ async function Settings() {
         </p>
         {!canWrite && (
           <p className="mt-2 rounded-lg bg-accent-soft px-3 py-2 text-[13px] text-accent">
-            Add a key for {config.provider === "anthropic" ? "Anthropic" : "OpenRouter"} (or switch provider below) to
-            start writing threads.
+            Add a key for {providerLabel(config.provider)} (or switch provider below) to start writing threads.
           </p>
         )}
         <div className="mt-3 grid gap-2">
-          <ApiKeyForm
-            provider="anthropic"
-            label="Anthropic"
-            hint={keyHint("anthropic")}
-            placeholder="sk-ant-…"
-            help="From platform.claude.com → API keys."
-          />
-          <ApiKeyForm
-            provider="openrouter"
-            label="OpenRouter"
-            hint={keyHint("openrouter")}
-            placeholder="sk-or-…"
-            help="From openrouter.ai → Keys. One key for Claude, GPT, Gemini, Grok and more."
-          />
+          {PROVIDERS.map((p) => (
+            <ApiKeyForm key={p.id} provider={p} hint={keyHint(p.id)} />
+          ))}
         </div>
       </section>
 
@@ -234,8 +224,13 @@ async function Settings() {
               provider={config.provider}
               model={config.model}
               anthropicModels={SUMMARY_MODELS}
+              openaiModels={OPENAI_MODELS}
               openrouterModels={openrouterModels}
-              hasKey={{ anthropic: !!keyHint("anthropic") || reader.isAdmin, openrouter: !!keyHint("openrouter") }}
+              hasKey={{
+                anthropic: !!keyHint("anthropic") || reader.isAdmin,
+                openai: !!keyHint("openai"),
+                openrouter: !!keyHint("openrouter"),
+              }}
             />
           </div>
           <fieldset className="mt-4">

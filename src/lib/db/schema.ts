@@ -210,6 +210,8 @@ export const userSettings = pgTable("user_settings", {
     .primaryKey()
     .references(() => user.id, { onDelete: "cascade" }),
   ...settingsColumns,
+  // When they finished or skipped the welcome; until then the feed opens with it.
+  welcomedAt: timestamp("welcomed_at", { withTimezone: true }),
 });
 
 /** Legacy single-reader settings (row id = 1), copied into the first admin's account on first sign-in. */
@@ -239,7 +241,7 @@ export const termAffinity = pgTable("term_affinity", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export type Provider = "anthropic" | "openrouter";
+export type Provider = "anthropic" | "openai" | "openrouter";
 
 /** Readers' own API keys, encrypted with AES-256-GCM (see src/lib/keys.ts). Never sent to the browser. */
 export const userKeys = pgTable(

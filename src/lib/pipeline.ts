@@ -4,8 +4,9 @@ import { isAdmin } from "./auth-config";
 import { getDb, schema } from "./db";
 import type { NewPaper, Paper, Preferences, Provider } from "./db/schema";
 import { getSpend } from "./feed";
-import { getKeyForWriting, label } from "./keys";
+import { getKeyForWriting, hasKeyFor } from "./keys";
 import { costUsd } from "./pricing";
+import { providerLabel } from "./providers";
 import { diversify, interestScore } from "./ranking";
 import { fetchByIds, fetchRecent, parseArxivId } from "./sources/arxiv";
 import { fetchTrending } from "./sources/inspire";
@@ -126,12 +127,12 @@ async function assertWithinBudget(reader: Reader, prefs: Preferences) {
 /** Whether this reader has a usable key for their chosen provider (checked before any work is claimed). */
 export async function canWrite(reader: Reader, provider?: Provider): Promise<boolean> {
   const chosen = provider ?? summaryConfigFor(await getPreferences(reader)).provider;
-  return !!(await getKeyForWriting(reader.id, reader.email, chosen));
+  return hasKeyFor(reader.id, reader.email, chosen);
 }
 
 async function requireKey(reader: Reader, provider: Provider): Promise<string> {
   const key = await getKeyForWriting(reader.id, reader.email, provider);
-  if (!key) throw new Error(`Add your ${label(provider)} API key in Settings to write threads.`);
+  if (!key) throw new Error(`Add your ${providerLabel(provider)} API key in Settings to write threads.`);
   return key;
 }
 
@@ -430,7 +431,7 @@ async function summariseMany(reader: Reader, list: Paper[]) {
   const failed: { id: string; error: string }[] = [];
   // No key: say so without recording a failed attempt against every paper.
   if (!(await canWrite(reader, config.provider))) {
-    const error = `Add your ${label(config.provider)} API key in Settings to write threads.`;
+    const error = `Add your ${providerLabel(config.provider)} API key in Settings to write threads.`;
     return { summarised, failed: list.map((p) => ({ id: p.id, error })) };
   }
   const queue = [...list];

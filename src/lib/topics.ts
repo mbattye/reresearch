@@ -101,3 +101,10 @@ export const SUMMARY_MODELS = [
   { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", note: "~6¢ (3¢ batched) · default" },
   { id: "claude-opus-5-5", label: "Claude Opus 5.5", note: "~14¢ (7¢ batched) · sharpest" },
 ];
+
+/** Costs estimated from the Claude models at the same prices; not yet measured. */
+export const OPENAI_MODELS = [
+  { id: "gpt-6-luna", label: "GPT-6 Luna", note: "under 1¢ a paper (est.) · plainer" },
+  { id: "gpt-6.1-terra", label: "GPT-6.1 Terra", note: "~3¢ (est.)" },
+  { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", note: "~6¢ (est.) · default" },
+];
