@@ -16,7 +16,7 @@ export function QueueList({ items }: { items: QueueItem[] }) {
         <li key={p.id} className="border-b border-line px-4 py-3">
           <div className="flex items-baseline gap-1 text-[13px] text-muted">
             <span className="truncate">{creditLine(p)}</span>
-            <span className="shrink-0">
+            <span className="max-w-[60%] shrink-0 truncate">
               · {p.primaryCategory ? categoryShort(p.primaryCategory) : (p.venue ?? "journal")} · {relativeTime(p.publishedAt)}
             </span>
           </div>

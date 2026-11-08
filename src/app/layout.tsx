@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { baseURL } from "@/lib/auth-config";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -12,10 +13,16 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const description = "New research papers, summarised into short, factual threads at your level. Read on your phone.";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(baseURL()),
   title: "reresearch",
-  description: "New research papers, read as threads.",
-  appleWebApp: { capable: true, title: "reresearch", statusBarStyle: "black-translucent" },
+  description,
+  // Not black-translucent, whose white status text vanishes against the light theme.
+  appleWebApp: { capable: true, title: "reresearch", statusBarStyle: "default" },
+  openGraph: { title: "reresearch", description, siteName: "reresearch", type: "website" },
+  twitter: { card: "summary_large_image", title: "reresearch", description },
 };
 
 export const viewport: Viewport = {

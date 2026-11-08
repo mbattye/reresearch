@@ -30,7 +30,7 @@ export default function ThreadPage({ params, searchParams }: PageProps<"/p/[id]"
 
 function TopBar() {
   return (
-    <header className="sticky top-0 z-20 flex h-12 items-center gap-6 border-b border-line bg-bg/85 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-md">
+    <header className="sticky top-0 z-20 flex h-[calc(3rem+env(safe-area-inset-top))] items-center gap-6 border-b border-line bg-bg/85 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-md">
       <BackToFeed />
       <span className="text-[17px] font-bold">Thread</span>
     </header>

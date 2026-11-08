@@ -17,7 +17,7 @@ export function PostCard({ item }: { item: FeedItem }) {
       <div className="min-w-0 flex-1">
         <header className="flex items-baseline gap-1 text-[14px] leading-5">
           <span className="truncate font-semibold">{creditLine(paper)}</span>
-          <span className="shrink-0 text-muted">
+          <span className="max-w-[60%] shrink-0 truncate text-muted">
             · {paper.primaryCategory ? categoryShort(paper.primaryCategory) : (paper.venue ?? "journal")} ·{" "}
             {relativeTime(paper.publishedAt)}
           </span>

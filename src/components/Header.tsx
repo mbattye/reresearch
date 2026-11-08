@@ -62,7 +62,7 @@ export function Header({ tab, topic = null, topics = [], total = 0 }: Props) {
         ))}
       </nav>
       {showChips && (
-        <nav aria-label="Filter by topic" className="flex gap-2 overflow-x-auto border-t border-line px-4 py-2 [scrollbar-width:none]">
+        <nav aria-label="Filter by topic" className="flex gap-2 overflow-x-auto border-t border-line px-4 py-2 [scrollbar-width:none] sm:flex-wrap">
           <Chip href={href(tab, null)} active={topic === null} label="All" count={total} />
           {topics.map((t) => (
             <Chip key={t.id} href={href(tab, t.id)} active={topic === t.id} label={t.label} count={t.count} />

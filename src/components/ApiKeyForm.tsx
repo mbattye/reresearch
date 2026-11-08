@@ -25,7 +25,7 @@ export function ApiKeyForm({ provider, hint }: Props) {
               type="button"
               disabled={removing}
               onClick={() => startRemoving(() => removeApiKey(provider.id))}
-              className="rounded-full px-2 py-0.5 text-like hover:bg-raised disabled:opacity-50"
+              className="rounded-full px-2 py-1 text-like hover:bg-raised disabled:opacity-50"
             >
               {removing ? "Removing…" : "Remove"}
             </button>

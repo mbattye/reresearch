@@ -51,6 +51,7 @@ label:has(input:not(:disabled)) {
 }
 
 body {
+  padding-bottom: env(safe-area-inset-bottom);
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-geist-sans), system-ui, sans-serif;

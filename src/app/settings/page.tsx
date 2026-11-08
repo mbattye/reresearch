@@ -38,7 +38,7 @@ export const maxDuration = 300;
 export default function SettingsPage() {
   return (
     <>
-      <header className="sticky top-0 z-20 flex h-12 items-center gap-6 border-b border-line bg-bg/85 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-md">
+      <header className="sticky top-0 z-20 flex h-[calc(3rem+env(safe-area-inset-top))] items-center gap-6 border-b border-line bg-bg/85 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-md">
         <BackToFeed />
         <span className="text-[17px] font-bold">Settings</span>
         <div className="ml-auto">
@@ -154,8 +154,8 @@ async function Settings() {
                       defaultChecked={prefs.categories.includes(cat)}
                       className="size-4 accent-[var(--accent)]"
                     />
-                    <span>{label}</span>
-                    <span className="ml-auto shrink-0 font-mono text-[12px] text-muted">{categorySource(cat)}</span>
+                    <span className="min-w-0">{label}</span>
+                    <span className="ml-auto max-w-[45%] truncate font-mono text-[12px] text-muted">{categorySource(cat)}</span>
                   </label>
                 ))}
               </div>

@@ -8,7 +8,7 @@ function hue(s: string): number {
 }
 
 export function Avatar({ category, size = 40 }: { category: string | null; size?: number }) {
-  const label = categoryShort(category);
+  const label = categoryShort(category).split(" ")[0];
   const h = hue(category ?? "paper");
   return (
     <div
