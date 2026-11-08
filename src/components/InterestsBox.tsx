@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import { AI_KEYWORDS, keywordLine } from "@/lib/topics";
+import { useScheduleSave } from "./AutoSaveForm";
 
 /** The keywords box, with a shortcut that adds any AI starter keywords not already listed. */
 export function InterestsBox({ initial }: { initial: string }) {
   const [value, setValue] = useState(initial);
+  const scheduleSave = useScheduleSave();
   const terms = value.split("\n").map((line) => line.split(/[:=]/)[0].trim().toLowerCase());
   const missing = AI_KEYWORDS.filter((k) => !terms.includes(k.term.toLowerCase()));
   return (
@@ -20,7 +22,10 @@ export function InterestsBox({ initial }: { initial: string }) {
       {missing.length > 0 && (
         <button
           type="button"
-          onClick={() => setValue([value.trimEnd(), ...missing.map(keywordLine)].filter(Boolean).join("\n"))}
+          onClick={() => {
+            setValue([value.trimEnd(), ...missing.map(keywordLine)].filter(Boolean).join("\n"));
+            scheduleSave();
+          }}
           className="mt-2 rounded-full border border-line px-3 py-1 text-[13px] font-medium hover:bg-raised"
         >
           Add AI keywords

@@ -5,6 +5,7 @@ import { AccessRequestRow } from "@/components/AccessRequestRow";
 import { AddPaperForm } from "@/components/AddPaperForm";
 import { BackIcon } from "@/components/icons";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
+import { AutoSaveForm } from "@/components/AutoSaveForm";
 import { FetchButton } from "@/components/FetchButton";
 import { InterestsBox } from "@/components/InterestsBox";
 import { InviteForm } from "@/components/InviteForm";
@@ -22,7 +23,7 @@ import { getPreferences, monthlyBudget, summaryConfigFor } from "@/lib/pipeline"
 import { formatUsd } from "@/lib/pricing";
 import { providerLabel, PROVIDERS } from "@/lib/providers";
 import { CATEGORY_GROUPS, CATEGORY_LABELS, keywordLine, OPENAI_MODELS, SUMMARY_MODELS } from "@/lib/topics";
-import { savePreferences, signOut } from "../actions";
+import { signOut } from "../actions";
 import { timeAgo } from "@/lib/format";
 
 export const maxDuration = 300;
@@ -115,10 +116,14 @@ async function Settings() {
         <AddPaperForm />
       </section>
 
-      <form action={savePreferences}>
+      <AutoSaveForm>
         <section className="px-4 py-4">
           <h2 className={sectionTitle}>Reading level</h2>
-          <p className={hint}>How much background threads assume. New threads use it; older ones can be rewritten from the thread page.</p>
+          <p className={hint}>
+            How much background threads assume. Changes save as you make them and apply to threads written from now on.
+            Threads you already have keep their level; open one to rewrite it at yours, which costs about the same as
+            writing it did.
+          </p>
           <div className="mt-3">
             <LevelSlider initial={prefs.readingLevel} />
           </div>
@@ -126,7 +131,7 @@ async function Settings() {
 
         <section className="px-4 py-4">
           <h2 className={sectionTitle}>arXiv categories</h2>
-          <p className={hint}>New submissions in these categories are fetched on each run.</p>
+          <p className={hint}>New submissions in these categories are fetched on each run. Changes save as you make them.</p>
           {CATEGORY_GROUPS.map((group) => (
             <div key={group.name} className="mt-3">
               <h3 className="px-1 text-[13px] font-medium text-muted">{group.name}</h3>
@@ -288,11 +293,8 @@ async function Settings() {
               />
             </span>
           </label>
-          <button className="mt-4 w-full rounded-full bg-fg py-2 text-[14px] font-semibold text-bg hover:opacity-90">
-            Save
-          </button>
         </section>
-      </form>
+      </AutoSaveForm>
 
       <section className="px-4 py-4">
         <h2 className={sectionTitle}>Spend</h2>
