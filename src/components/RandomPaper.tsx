@@ -44,6 +44,8 @@ export function RandomPaper({ hasKey }: { hasKey: boolean }) {
             {paper.written || hasKey ? (
               <Link
                 href={`/p/${encodeURIComponent(paper.id)}`}
+                // Opening it starts the write-up, so coming back should offer the thread, not another write-up.
+                onClick={() => setResult({ ok: true, paper: { ...paper, written: true } })}
                 className="rounded-full bg-fg px-3.5 py-1 text-[13px] font-semibold text-bg transition hover:opacity-85 active:scale-95"
               >
                 {paper.written ? "Read the thread" : "Write it up"}
