@@ -108,3 +108,41 @@ export const OPENAI_MODELS = [
   { id: "gpt-6.1-terra", label: "GPT-6.1 Terra", note: "~3¢ (est.)" },
   { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", note: "~6¢ (est.) · default" },
 ];
+
+/** Broad topics for filtering the feed. A paper belongs to every topic any of its arXiv categories falls in. */
+export const TOPICS = [
+  { id: "particle", label: "Particle & nuclear", match: /^(hep-|nucl-)|^physics\.(acc-ph|ins-det)$/ },
+  { id: "quantum", label: "Quantum & atomic", match: /^quant-ph$|^physics\.(atom-ph|optics)$/ },
+  { id: "fusion", label: "Fusion & plasma", match: /^physics\.plasm-ph$/ },
+  { id: "astro", label: "Astro & gravity", match: /^astro-ph|^gr-qc$/ },
+  { id: "matter", label: "Condensed matter", match: /^cond-mat/ },
+  { id: "ai", label: "AI", match: /^(cs\.(AI|LG|CL|CV|RO|MA|NE)|stat\.ML)$/ },
+] as const;
+
+export const OTHER_TOPIC = { id: "other", label: "Other" } as const;
+
+export type TopicId = (typeof TOPICS)[number]["id"] | typeof OTHER_TOPIC.id;
+
+export function topicsOf(categories: string[]): TopicId[] {
+  const found: TopicId[] = TOPICS.filter((t) => categories.some((c) => t.match.test(c))).map((t) => t.id);
+  return found.length ? found : [OTHER_TOPIC.id];
+}
+
+export interface TopicCount {
+  id: TopicId;
+  label: string;
+  count: number;
+}
+
+/** The topics present in a list of papers, in display order, with how many papers each has. */
+export function countTopics(categoryLists: string[][]): TopicCount[] {
+  const counts = new Map<TopicId, number>();
+  for (const cats of categoryLists) for (const t of topicsOf(cats)) counts.set(t, (counts.get(t) ?? 0) + 1);
+  return [...TOPICS, OTHER_TOPIC]
+    .filter((t) => counts.has(t.id))
+    .map((t) => ({ id: t.id, label: t.label, count: counts.get(t.id)! }));
+}
+
+export function isTopic(value: unknown): value is TopicId {
+  return value === OTHER_TOPIC.id || TOPICS.some((t) => t.id === value);
+}

@@ -24,7 +24,7 @@ arXiv API ──► papers table ──► ranker ──► top N ──► Clau
 - **Full text** (`src/lib/fulltext.ts`): arXiv's HTML version (sections, captions and maths as LaTeX, references dropped, appendices cut first when long), falling back to text extracted from the PDF, then to the abstract.
 - **Summaries** (`src/lib/summarise.ts`): Claude (Sonnet 5.5 by default, switchable in Settings) returns a structured thread: headline, hook, sectioned posts, TL;DR, key numbers, tags. The editorial voice lives in `SYSTEM_PROMPT` and is the main place to tune the writing.
 - **When threads get written**: the daily run writes your top few through the half-price Message Batches API. Anything else is written when you open it, from the Queue or a link.
-- **Feed**: For you (ranked), Latest, Saved, and Queue (fetched papers not yet written up).
+- **Feed**: For you (ranked), Latest, Saved, and Queue (fetched papers not yet written up). Topic chips under the tabs filter any of them by broad topic (from the papers' arXiv categories; cross-listed papers count in each).
 
 ## Run locally
 

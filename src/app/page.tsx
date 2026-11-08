@@ -8,8 +8,9 @@ import { PostCard } from "@/components/PostCard";
 import { QueueList } from "@/components/QueueList";
 import { Welcome } from "@/components/Welcome";
 import { requireUser } from "@/lib/auth";
-import { getFeed, getJobCounts, getQueue, type FeedTab } from "@/lib/feed";
+import { getFeed, getJobCounts, getQueue, type FeedItem, type FeedTab, type QueueItem } from "@/lib/feed";
 import { canWrite, getPreferences, summaryConfigFor } from "@/lib/pipeline";
+import { countTopics, isTopic, topicsOf, TOPICS, OTHER_TOPIC, type TopicId } from "@/lib/topics";
 import { FetchButton } from "@/components/FetchButton";
 
 export const maxDuration = 300;
@@ -26,8 +27,9 @@ export default function Home({ searchParams }: PageProps<"/">) {
 
 async function HomeContent({ searchParams }: Pick<PageProps<"/">, "searchParams">) {
   await connection();
-  const raw = (await searchParams).tab;
-  const tab = TAB_IDS.includes(raw as FeedTab) ? (raw as FeedTab) : "foryou";
+  const params = await searchParams;
+  const tab = TAB_IDS.includes(params.tab as FeedTab) ? (params.tab as FeedTab) : "foryou";
+  const topic = isTopic(params.topic) ? params.topic : null;
   const reader = await requireUser();
   const prefs = await getPreferences(reader);
   const { readingLevel } = prefs;
@@ -38,9 +40,15 @@ async function HomeContent({ searchParams }: Pick<PageProps<"/">, "searchParams"
   const writing = counts.writing ?? 0;
   const summarising = writing > 0;
 
+  // Filtering happens after the fact, on what the tab already holds, so the chips only offer topics it has.
+  const all: (FeedItem | QueueItem)[] =
+    tab === "queue" ? await getQueue(reader.id, readingLevel) : await getFeed(reader.id, readingLevel, tab);
+  const topics = countTopics(all.map((i) => i.paper.categories));
+  const shown = topic ? all.filter((i) => topicsOf(i.paper.categories).includes(topic)) : all;
+
   return (
     <>
-      <Header tab={tab} />
+      <Header tab={tab} topic={topic} topics={topics} total={all.length} />
       {!prefs.welcomedAt && <Welcome hasKey={hasKey} />}
       <AutoRefresh active={summarising || tab === "queue"} />
       <BatchCollector active={(counts.batched ?? 0) > 0} />
@@ -50,26 +58,41 @@ async function HomeContent({ searchParams }: Pick<PageProps<"/">, "searchParams"
         </Link>
       )}
       {tab === "queue" ? (
-        <Queue userId={reader.id} level={readingLevel} />
+        <Queue items={shown as QueueItem[]} topic={topic} />
       ) : (
-        <Feed userId={reader.id} level={readingLevel} tab={tab} hasKey={hasKey} />
+        <Feed items={shown as FeedItem[]} tab={tab} topic={topic} hasKey={hasKey} />
       )}
     </>
   );
 }
 
-async function Feed({
-  userId,
-  level,
+function topicLabel(topic: TopicId) {
+  return [...TOPICS, OTHER_TOPIC].find((t) => t.id === topic)?.label ?? topic;
+}
+
+function NoneInTopic({ tab, topic }: { tab: FeedTab; topic: TopicId }) {
+  return (
+    <p className="px-6 py-16 text-center text-[15px] text-muted">
+      Nothing in {topicLabel(topic)} here.{" "}
+      <Link href={tab === "foryou" ? "/" : `/?tab=${tab}`} className="text-accent">
+        Show all topics
+      </Link>
+    </p>
+  );
+}
+
+function Feed({
+  items,
   tab,
+  topic,
   hasKey,
 }: {
-  userId: string;
-  level: number;
+  items: FeedItem[];
   tab: Exclude<FeedTab, "queue">;
+  topic: TopicId | null;
   hasKey: boolean;
 }) {
-  const items = await getFeed(userId, level, tab);
+  if (items.length === 0 && topic) return <NoneInTopic tab={tab} topic={topic} />;
   if (items.length === 0) return <EmptyState tab={tab} hasKey={hasKey} />;
   return (
     <main>
@@ -81,8 +104,7 @@ async function Feed({
   );
 }
 
-async function Queue({ userId, level }: { userId: string; level: number }) {
-  const items = await getQueue(userId, level);
+function Queue({ items, topic }: { items: QueueItem[]; topic: TopicId | null }) {
   return (
     <main>
       <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
@@ -91,7 +113,9 @@ async function Queue({ userId, level }: { userId: string; level: number }) {
         </p>
         <FetchButton />
       </div>
-      {items.length === 0 ? (
+      {items.length === 0 && topic ? (
+        <NoneInTopic tab="queue" topic={topic} />
+      ) : items.length === 0 ? (
         <p className="px-4 py-10 text-center text-[14px] text-muted">Nothing queued. Fetch new papers to fill it.</p>
       ) : (
         <QueueList items={items} />
