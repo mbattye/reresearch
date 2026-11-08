@@ -28,7 +28,16 @@ import {
   type SummaryConfig,
   type SummaryResult,
 } from "./summarise";
-import { DEFAULT_CATEGORIES, DEFAULT_KEYWORDS, DEFAULT_SUMMARIES_PER_RUN, topicsOf, type TopicId } from "./topics";
+import {
+  CATEGORY_GROUPS,
+  CATEGORY_LABELS,
+  DEFAULT_CATEGORIES,
+  DEFAULT_KEYWORDS,
+  DEFAULT_SUMMARIES_PER_RUN,
+  isArxivCategory,
+  topicsOf,
+  type TopicId,
+} from "./topics";
 
 const { papers, threads, threadJobs, userPapers, userSettings, userTerms, summaryBatches } = schema;
 
@@ -405,6 +414,59 @@ async function upsertPapers(list: NewPaper[]): Promise<number> {
     // xmax = 0 only for rows this statement inserted rather than updated.
     .returning({ inserted: sql<boolean>`(xmax = 0)` });
   return inserted.filter((r) => r.inserted).length;
+}
+
+export interface RandomPick {
+  id: string;
+  title: string;
+  authors: string;
+  field: string;
+  abstract: string;
+  written: boolean;
+}
+
+const pickOne = <T,>(list: T[]): T => list[Math.floor(Math.random() * list.length)];
+
+async function newestInCategory(category: string): Promise<NewPaper[]> {
+  if (isArxivCategory(category)) return fetchRecent([category], 40);
+  const candidates = category.startsWith("biorxiv:") ? await fetchBiorxiv([category]) : await fetchRecentBySubfields([category]);
+  return resolveCandidates(candidates);
+}
+
+/**
+ * A recent paper from any field, ignoring the reader's settings: a random group first, so physics's
+ * long list doesn't dominate, then a category in it. Stored in the shared catalogue so it can be
+ * linked to, but with no row for this reader, so it changes nothing unless they open it.
+ */
+export async function randomPaper(reader: Reader): Promise<RandomPick | null> {
+  const db = await getDb();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const category = pickOne(Object.keys(pickOne(CATEGORY_GROUPS).labels));
+    const found = await newestInCategory(category).catch(() => []);
+    const readable = found.filter((p) => p.abstract.length > 100);
+    if (readable.length === 0) continue;
+    const known = await db
+      .select({ id: userPapers.paperId })
+      .from(userPapers)
+      .where(and(eq(userPapers.userId, reader.id), inArray(userPapers.paperId, readable.map((p) => p.id))));
+    const seen = new Set(known.map((k) => k.id));
+    const fresh = readable.filter((p) => !seen.has(p.id));
+    if (fresh.length === 0) continue;
+
+    const paper = pickOne(fresh);
+    await upsertPapers([paper]);
+    const [thread] = await db.select({ id: threads.paperId }).from(threads).where(eq(threads.paperId, paper.id)).limit(1);
+    const authors = paper.authors.length > 3 ? `${paper.authors.slice(0, 3).join(", ")} and others` : paper.authors.join(", ");
+    return {
+      id: paper.id,
+      title: paper.title,
+      authors,
+      field: CATEGORY_LABELS[category] ?? category,
+      abstract: paper.abstract.replace(/^\s*abstract[\s:.-]*/i, ""),
+      written: !!thread,
+    };
+  }
+  return null;
 }
 
 /** Add specific papers the reader asked for (arXiv ids, DOIs, or links containing either). Returns the paper ids. */

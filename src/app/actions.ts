@@ -18,14 +18,19 @@ import {
   collectBatches,
   getPreferences,
   ingest,
+  randomPaper,
   requestPapers,
   rewriteForReader,
   summariseByIds,
+  type RandomPick,
 } from "@/lib/pipeline";
 import { PROVIDERS } from "@/lib/providers";
-import { OPENAI_MODELS, SUMMARY_MODELS } from "@/lib/topics";
+import { CATEGORY_LABELS, OPENAI_MODELS, SUMMARY_MODELS } from "@/lib/topics";
 
 type Result = { ok: boolean; message: string } | null;
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
 
 export async function toggleFlag(paperId: string, flag: "liked" | "saved" | "hidden", value: boolean) {
   const reader = await requireUser();
@@ -71,6 +76,32 @@ export async function fetchPapers(): Promise<FetchState> {
   } catch (err) {
     return { ok: false, message: `Fetch failed: ${err instanceof Error ? err.message : String(err)}` };
   }
+}
+
+export type RandomResult = { ok: true; paper: RandomPick } | { ok: false; message: string };
+
+/** Draws a random paper to preview. Reader-specific data is left alone. */
+export async function drawRandomPaper(): Promise<RandomResult> {
+  const reader = await requireUser();
+  if (!(await allowAttempt(`random:${reader.id}`, 60, HOUR))) {
+    return { ok: false, message: "That's a lot of surprises for one hour. Try again later." };
+  }
+  const paper = await randomPaper(reader).catch(() => null);
+  return paper ? { ok: true, paper } : { ok: false, message: "Couldn't find one just now. Try again." };
+}
+
+/** Adds one offered topic to the reader's list. */
+export async function followTopic(category: string) {
+  const reader = await requireUser();
+  if (!(category in CATEGORY_LABELS)) return;
+  const prefs = await getPreferences(reader);
+  if (prefs.categories.includes(category)) return;
+  const db = await getDb();
+  await db
+    .update(schema.userSettings)
+    .set({ categories: [...prefs.categories, category], updatedAt: new Date() })
+    .where(eq(schema.userSettings.userId, reader.id));
+  refresh();
 }
 
 export type AddPaperState = Result;
@@ -233,9 +264,6 @@ export async function dismissWelcome() {
 // Sign-in and invites
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
 
 async function sendLink(email: string, invite = false) {
   const auth = await getAuth();

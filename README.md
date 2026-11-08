@@ -27,6 +27,7 @@ OpenAlex  ▲           (scored on        ▲       (a turn                     
 - **Full text** (`src/lib/fulltext.ts`): arXiv's HTML version (sections, captions and maths as LaTeX, references dropped, appendices cut first when long), falling back to text extracted from the PDF, then to the abstract.
 - **Summaries** (`src/lib/summarise.ts`): the reader's chosen model (Claude Sonnet 5.5 by default; GPT and others through their own key) returns a structured thread: headline, hook, sectioned posts, TL;DR, key numbers, tags. The writing rules live in `BASE_PROMPT`, and each reading level's voice in `src/skills/levels/`.
 - **When threads get written**: the daily run writes your top few, through the half-price Message Batches API for Anthropic keys and live for others. Fetching from the app writes the best few straight away. Anything else is written when you open it, from the Queue or a link.
+- **Random paper**: a banner on For you and Latest draws a recent paper from any field, whatever your settings. It's only a preview, and changes nothing unless you open it. Liking or saving one teaches your ranking like any other, and offers to add its field to your topics.
 - **Feed**: For you (ranked), Latest, Saved, and Queue (fetched papers not yet written up). Topic chips under the tabs filter any of them by broad topic (from the papers' categories; cross-listed papers count in each).
 
 ## Run locally

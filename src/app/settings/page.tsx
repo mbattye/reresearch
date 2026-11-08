@@ -11,6 +11,7 @@ import { InviteForm } from "@/components/InviteForm";
 import { LevelSlider } from "@/components/LevelSlider";
 import { ModelPicker } from "@/components/ModelPicker";
 import { RemoveReaderButton } from "@/components/RemoveReaderButton";
+import { SettingsTour } from "@/components/SettingsTour";
 import { TopicGroup } from "@/components/TopicGroup";
 import { pendingRequests } from "@/lib/access";
 import { listReaders } from "@/lib/admin";
@@ -41,7 +42,7 @@ export default function SettingsPage() {
       <header className="sticky top-0 z-20 flex h-[calc(3rem+env(safe-area-inset-top))] items-center gap-6 border-b border-line bg-bg/85 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-md">
         <BackToFeed />
         <span className="text-[17px] font-bold">Settings</span>
-        <div className="ml-auto">
+        <div data-tour="fetch" className="ml-auto rounded-full">
           <FetchButton variant="icon" />
         </div>
       </header>
@@ -80,6 +81,7 @@ async function Settings() {
 
   return (
     <main className="divide-y divide-line">
+      <SettingsTour />
       <section className="flex items-center justify-between gap-3 px-4 py-4">
         <div className="min-w-0">
           <h2 className={sectionTitle}>Signed in</h2>
@@ -95,7 +97,7 @@ async function Settings() {
         </form>
       </section>
 
-      <section className="px-4 py-4">
+      <section data-tour="keys" className="px-4 py-4">
         <h2 className={sectionTitle}>Your API keys</h2>
         <p className={hint}>
           Threads are written with your own key, so you pay your provider directly. Keys are encrypted, never shown
@@ -125,7 +127,7 @@ async function Settings() {
       </section>
 
       <AutoSaveForm>
-        <section className="px-4 py-4">
+        <section data-tour="level" className="px-4 py-4">
           <h2 className={sectionTitle}>Reading level</h2>
           <p className={hint}>
             How much background threads assume. Changes save as you make them and apply to threads written from now on.
@@ -137,7 +139,7 @@ async function Settings() {
           </div>
         </section>
 
-        <section className="px-4 py-4">
+        <section data-tour="topics" className="px-4 py-4">
           <h2 className={sectionTitle}>Topics</h2>
           <p className={hint}>New papers in these are fetched on each run. Changes save as you make them.</p>
           {CATEGORY_GROUPS.map((group) => {
@@ -209,7 +211,7 @@ async function Settings() {
           </div>
         </section>
 
-        <section className="px-4 py-4">
+        <section data-tour="interests" className="px-4 py-4">
           <h2 className={sectionTitle}>Interests</h2>
           <p className={hint}>
             One per line. Optional weight after a colon (default 1; negative to steer away). Title matches count double.
@@ -228,7 +230,7 @@ async function Settings() {
           </label>
         </section>
 
-        <section className="px-4 py-4">
+        <section data-tour="writing" className="px-4 py-4">
           <h2 className={sectionTitle}>Writing threads</h2>
           <p className={hint}>
             Cheaper models are faster but less careful with nuance and numbers. With Anthropic, the daily run uses the

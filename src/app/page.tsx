@@ -7,6 +7,7 @@ import { BatchCollector } from "@/components/BatchCollector";
 import { Header } from "@/components/Header";
 import { PostCard } from "@/components/PostCard";
 import { QueueList } from "@/components/QueueList";
+import { RandomPaper } from "@/components/RandomPaper";
 import { Welcome } from "@/components/Welcome";
 import { requireUser } from "@/lib/auth";
 import { getFeed, getJobCounts, getQueue, type FeedItem, type FeedTab, type QueueItem } from "@/lib/feed";
@@ -60,6 +61,7 @@ async function HomeContent({ searchParams }: Pick<PageProps<"/">, "searchParams"
           Writing {writing} thread{writing === 1 ? "" : "s"}…
         </Link>
       )}
+      {(tab === "foryou" || tab === "latest") && <RandomPaper hasKey={hasKey} />}
       {tab === "queue" ? (
         <Queue items={shown as QueueItem[]} topic={topic} />
       ) : (

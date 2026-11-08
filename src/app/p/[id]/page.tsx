@@ -5,6 +5,7 @@ import { connection } from "next/server";
 import { ActionBar } from "@/components/ActionBar";
 import { Avatar } from "@/components/Avatar";
 import { BackToFeed } from "@/components/BackToFeed";
+import { FollowTopic } from "@/components/FollowTopic";
 import { MarkRead } from "@/components/MarkRead";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { WriteOnOpen } from "@/components/WriteOnOpen";
@@ -41,7 +42,8 @@ async function Thread({ params, searchParams }: Pick<PageProps<"/p/[id]">, "para
   await connection();
   const { id } = await params;
   const reader = await requireUser();
-  const { readingLevel } = await getPreferences(reader);
+  const prefs = await getPreferences(reader);
+  const { readingLevel } = prefs;
   const item = await getPaperView(reader.id, decodeURIComponent(id), readingLevel);
   if (!item) notFound();
   const { paper, thread: closest, saved, interaction, job } = item;
@@ -129,6 +131,12 @@ async function Thread({ params, searchParams }: Pick<PageProps<"/p/[id]">, "para
             hidden={!!interaction?.hidden}
             absUrl={paper.absUrl}
           />
+          {(interaction?.liked || interaction?.saved) &&
+            paper.primaryCategory &&
+            CATEGORY_LABELS[paper.primaryCategory] &&
+            !prefs.categories.includes(paper.primaryCategory) && (
+              <FollowTopic category={paper.primaryCategory} label={CATEGORY_LABELS[paper.primaryCategory]} />
+            )}
         </div>
 
         <section className="px-4 py-4">
