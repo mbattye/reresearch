@@ -1,51 +1,56 @@
 # reresearch
 
-New research papers, read as threads. reresearch pulls fresh papers from arXiv, ranks them against your interests, and has Claude read the full PDF and write each one up as a short X-style thread: the finding, the context, the method, the numbers, the caveats and why it matters. It's built to be scrolled on a phone in spare moments.
+New research papers, read as threads. reresearch pulls fresh papers from arXiv, bioRxiv and open-access journals, ranks them against your interests, and has an AI model read each one and write it up as a short X-style thread: the finding, the context, the method, the numbers, the caveats and why it matters. Facts first, no hype, pitched at the level you choose. It's built to be scrolled on a phone in spare moments.
 
-Starting focus: particle physics, quantum, and fusion energy, with AI categories one tick away in Settings. Any arXiv category works.
+Covers physics, AI, chemistry and biology, with sub-fields you tick in Settings. Any arXiv category works too. Readers bring their own Anthropic, OpenAI or OpenRouter key and pay their provider directly.
+
+Live at [reresearch.app](https://www.reresearch.app), invite only for now, or run your own copy (see below).
 
 ## How it works
 
 ```
-arXiv API ──► papers table ──► ranker ──► top N ──► Claude (full text) ──► threads table ──► feed
-   ▲              (scored on         ▲                                                    │
-   │               keywords +        └──── likes / saves / "less like this" ◄─────────────┘
- daily cron        learned tags)            adjust tag affinities
+arXiv, bioRxiv, ──► papers table ──► ranker ──► top N ──► your AI key (full text) ──► threads table ──► feed
+OpenAlex  ▲           (scored on        ▲       (a turn                                                 │
+          │            keywords +       │       per topic)                                              │
+     daily cron        learned tags)    └──── likes / saves / "less like this" adjust tag affinities ◄──┘
 ```
 
 - **Sources** (`src/lib/sources/`), each switchable in Settings:
   - **arXiv**: new submissions in your categories.
+  - **bioRxiv** subject areas, and **OpenAlex** chemistry subfields (open-access papers with a PDF we can download; ChemRxiv and ACS block automated downloads, so they're left out).
   - **INSPIRE-HEP trending**: the most-cited particle-physics papers of the last six weeks.
   - **Semantic Scholar**: recommendations from the papers you like and save (and away from the ones you hide).
   - **Add a paper**: any arXiv link or DOI. DOIs are looked up on OpenAlex, which finds the arXiv version if there is one, otherwise the best legal free copy.
 
-  Anything with an arXiv version is stored under its arXiv id so it gets the cheap HTML full text. Discovered papers carry a boost (citations, "similar to your likes") on top of the keyword score, and at most half of each run's write-ups go to them, so new submissions always get a look in.
+  Anything with an arXiv version is stored under its arXiv id so it gets the cheap HTML full text. Discovered papers carry a boost (citations, "similar to your likes") on top of the keyword score, and at most half of each run's write-ups go to them, so new submissions always get a look in. The rest go round your topics in turn, so a field your keywords don't mention still gets written up.
 - **Ranking** (`src/lib/ranking.ts`): your keyword weights plus learned tag affinities matched against title (double weight) and abstract, then a four-day recency half-life at feed time. Every score keeps its reasons, which the Queue tab shows.
 - **Full text** (`src/lib/fulltext.ts`): arXiv's HTML version (sections, captions and maths as LaTeX, references dropped, appendices cut first when long), falling back to text extracted from the PDF, then to the abstract.
-- **Summaries** (`src/lib/summarise.ts`): Claude (Sonnet 5.5 by default, switchable in Settings) returns a structured thread: headline, hook, sectioned posts, TL;DR, key numbers, tags. The editorial voice lives in `SYSTEM_PROMPT` and is the main place to tune the writing.
-- **When threads get written**: the daily run writes your top few through the half-price Message Batches API. Anything else is written when you open it, from the Queue or a link.
-- **Feed**: For you (ranked), Latest, Saved, and Queue (fetched papers not yet written up). Topic chips under the tabs filter any of them by broad topic (from the papers' arXiv categories; cross-listed papers count in each).
+- **Summaries** (`src/lib/summarise.ts`): the reader's chosen model (Claude Sonnet 5.5 by default; GPT and others through their own key) returns a structured thread: headline, hook, sectioned posts, TL;DR, key numbers, tags. The writing rules live in `BASE_PROMPT`, and each reading level's voice in `src/skills/levels/`.
+- **When threads get written**: the daily run writes your top few, through the half-price Message Batches API for Anthropic keys and live for others. Fetching from the app writes the best few straight away. Anything else is written when you open it, from the Queue or a link.
+- **Feed**: For you (ranked), Latest, Saved, and Queue (fetched papers not yet written up). Topic chips under the tabs filter any of them by broad topic (from the papers' categories; cross-listed papers count in each).
 
 ## Run locally
 
 ```bash
 npm install
-cp .env.example .env.local   # add ANTHROPIC_API_KEY
+cp .env.example .env.local   # set ADMIN_EMAILS to your email
 npm run dev
 ```
 
-Open http://localhost:3000 and press **Fetch new**. With `DATABASE_URL` unset it uses an embedded Postgres (PGlite) in `.data/`, so there's nothing else to install. PGlite is single-process, so stop the dev server before running scripts that open the database.
+Open http://localhost:3000 and enter that email. Without `RESEND_API_KEY` the sign-in link is printed in the terminal. Add a model key in the welcome or in Settings (or set `ANTHROPIC_API_KEY`, which admins can fall back on), then press **Fetch new**. With `DATABASE_URL` unset it uses an embedded Postgres (PGlite) in `.data/`, so there's nothing else to install. PGlite is single-process, so stop the dev server before running scripts that open the database.
 
 ## Deploy (Vercel + Neon)
 
 1. Create a Postgres database (Neon free tier is fine) and import this repo into Vercel.
-2. Set environment variables (see `.env.example`): `DATABASE_URL`, `CRON_SECRET`, `ADMIN_EMAILS`, `BETTER_AUTH_SECRET`, `KEY_ENCRYPTION_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`, and optionally `ANTHROPIC_API_KEY` as the admins' fallback key.
+2. Set environment variables (see `.env.example`): `DATABASE_URL`, `CRON_SECRET`, `ADMIN_EMAILS`, `BETTER_AUTH_SECRET`, `KEY_ENCRYPTION_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`, and optionally `ANTHROPIC_API_KEY` as the admins' fallback key and `OPENALEX_API_KEY` for your own OpenAlex allowance (chemistry and DOI lookups).
 3. Deploy. `vercel-build` runs the migrations, and `vercel.json` schedules a daily fetch at 06:00 UTC.
 4. On your phone, open the site, request a sign-in link with an admin email, then Share → Add to Home Screen. Invite others from Settings.
 
 ## Reading levels
 
 A slider in Settings pitches threads from **Crayons** (explain it like I'm five) through Pub quiz, Science section, **Undergraduate** (the default), Journal club, to **Referee #2** (expert in the field). Each level is a plain markdown guide in `src/skills/levels/`, appended to the shared writing rules in `src/lib/summarise.ts`; edit the guides to change the voice, no code needed. Threads record the level they were written at, and a thread written at a different level offers "Rewrite at {your level}".
+
+Every version is kept, one per paper and level, so going back to a level never costs anything: the thread page lists the saved versions, free to open. A thread takes about 4 KB, so even a million of them would be around 5 GB with indexes.
 
 ## Crediting the research
 
@@ -79,6 +84,8 @@ Measured on five recent physics papers (about 23k tokens of text each):
 | Claude Opus 5.5, text | $0.138 | $0.069 |
 | Claude Opus 5.5, full PDF (the original setup) | $0.313 | $0.156 |
 
+OpenAI's GPT-6.1 Sol has the same list price as Sonnet, GPT-6.1 Terra half that and GPT-6 Luna the same as Haiku; those aren't measured yet, and OpenAI keys write live rather than batched.
+
 Settings shows spend this month, and each thread shows what it cost. The model and the full-PDF option are in Settings; `SUMMARY_MODEL`, `SUMMARY_EFFORT`, `SUMMARY_INPUT` and `SUMMARY_BATCH` set the defaults.
 
 ## Scripts
@@ -95,6 +102,10 @@ Settings shows spend this month, and each thread shows what it cost. The model a
 
 - Zotero connector (Web API: user id + API key) so your existing library feeds the queue, plus BibTeX/RIS upload
 - "Connect OpenRouter" sign-in (OAuth) instead of pasting a key
-- OSTI.gov (fusion reports), bioRxiv/medRxiv and Europe PMC
+- OSTI.gov (fusion reports), medRxiv and Europe PMC
 - Semantic ranking with embeddings, beyond keyword matching
 - Figures from the paper inline in threads
+
+## Licence
+
+[MIT](LICENSE). Use it however you like. The papers belong to their authors, and each thread links back to the original.

@@ -1,6 +1,8 @@
 {
   "name": "reresearch",
   "version": "0.1.0",
+  "description": "New research papers, read as threads, written by your own AI key",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "dev": "next dev",

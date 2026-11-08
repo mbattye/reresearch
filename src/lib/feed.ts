@@ -16,6 +16,8 @@ export interface FeedItem {
 }
 
 const FEED_WINDOW = 300;
+// Enough that filtering by a topic the reader's keywords don't favour still finds its papers.
+const QUEUE_WINDOW = 800;
 
 /** Prefer the thread at the reader's level, else the nearest level (ties go to the more detailed one). */
 function bestThread(list: Thread[], level: number): Thread {
@@ -76,6 +78,8 @@ function visibleJob(userId: string) {
 export interface PaperView {
   paper: Paper;
   thread: Thread | null;
+  /** Every version written so far, one per reading level. */
+  saved: Thread[];
   interaction: UserPaper | null;
   /** Writing, batched or failed at the reader's level, if anything is. */
   job: ThreadJob | null;
@@ -94,7 +98,7 @@ export async function getPaperView(userId: string, paperId: string, level: numbe
       .from(threadJobs)
       .where(and(eq(threadJobs.paperId, paperId), eq(threadJobs.readingLevel, level), visibleJob(userId))),
   ]);
-  return { paper, thread: list.length ? bestThread(list, level) : null, interaction: interaction ?? null, job: job ?? null };
+  return { paper, thread: list.length ? bestThread(list, level) : null, saved: list, interaction: interaction ?? null, job: job ?? null };
 }
 
 export interface QueueItem {
@@ -127,7 +131,7 @@ export async function getQueue(userId: string, level: number): Promise<QueueItem
       desc(userPapers.score),
       desc(papers.publishedAt),
     )
-    .limit(150);
+    .limit(QUEUE_WINDOW);
   return rows;
 }
 

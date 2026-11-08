@@ -1,9 +1,8 @@
-import Link from "next/link";
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { AccessRequestRow } from "@/components/AccessRequestRow";
 import { AddPaperForm } from "@/components/AddPaperForm";
-import { BackIcon } from "@/components/icons";
+import { BackToFeed } from "@/components/BackToFeed";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { AutoSaveForm } from "@/components/AutoSaveForm";
 import { FetchButton } from "@/components/FetchButton";
@@ -12,6 +11,7 @@ import { InviteForm } from "@/components/InviteForm";
 import { LevelSlider } from "@/components/LevelSlider";
 import { ModelPicker } from "@/components/ModelPicker";
 import { RemoveReaderButton } from "@/components/RemoveReaderButton";
+import { TopicGroup } from "@/components/TopicGroup";
 import { pendingRequests } from "@/lib/access";
 import { listReaders } from "@/lib/admin";
 import { requireUser, type CurrentUser } from "@/lib/auth";
@@ -22,7 +22,14 @@ import { getOpenRouterModels } from "@/lib/openrouter";
 import { getPreferences, monthlyBudget, summaryConfigFor } from "@/lib/pipeline";
 import { formatUsd } from "@/lib/pricing";
 import { providerLabel, PROVIDERS } from "@/lib/providers";
-import { CATEGORY_GROUPS, CATEGORY_LABELS, keywordLine, OPENAI_MODELS, SUMMARY_MODELS } from "@/lib/topics";
+import {
+  CATEGORY_GROUPS,
+  CATEGORY_LABELS,
+  categorySource,
+  keywordLine,
+  OPENAI_MODELS,
+  SUMMARY_MODELS,
+} from "@/lib/topics";
 import { signOut } from "../actions";
 import { timeAgo } from "@/lib/format";
 
@@ -32,10 +39,11 @@ export default function SettingsPage() {
   return (
     <>
       <header className="sticky top-0 z-20 flex h-12 items-center gap-6 border-b border-line bg-bg/85 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-md">
-        <Link href="/" className="-m-2 p-2" aria-label="Back to feed">
-          <BackIcon className="size-5" />
-        </Link>
+        <BackToFeed />
         <span className="text-[17px] font-bold">Settings</span>
+        <div className="ml-auto">
+          <FetchButton variant="icon" />
+        </div>
       </header>
       <Suspense fallback={null}>
         <Settings />
@@ -121,8 +129,8 @@ async function Settings() {
           <h2 className={sectionTitle}>Reading level</h2>
           <p className={hint}>
             How much background threads assume. Changes save as you make them and apply to threads written from now on.
-            Threads you already have keep their level; open one to rewrite it at yours, which costs about the same as
-            writing it did.
+            Threads you already have keep their level. Open one to rewrite it at yours, which costs about the same as
+            writing it did and only ever happens once: every version is kept, so going back to a level is free.
           </p>
           <div className="mt-3">
             <LevelSlider initial={prefs.readingLevel} />
@@ -130,12 +138,13 @@ async function Settings() {
         </section>
 
         <section className="px-4 py-4">
-          <h2 className={sectionTitle}>arXiv categories</h2>
-          <p className={hint}>New submissions in these categories are fetched on each run. Changes save as you make them.</p>
-          {CATEGORY_GROUPS.map((group) => (
-            <div key={group.name} className="mt-3">
-              <h3 className="px-1 text-[13px] font-medium text-muted">{group.name}</h3>
-              <div className="mt-1 grid gap-1">
+          <h2 className={sectionTitle}>Topics</h2>
+          <p className={hint}>New papers in these are fetched on each run. Changes save as you make them.</p>
+          {CATEGORY_GROUPS.map((group) => {
+            const chosen = Object.keys(group.labels).filter((c) => prefs.categories.includes(c)).length;
+            return (
+            <TopicGroup key={group.name} name={group.name} count={{ chosen, of: Object.keys(group.labels).length }}>
+              <div className="mt-1 grid gap-1 pb-1">
                 {Object.entries(group.labels).map(([cat, label]) => (
                   <label key={cat} className="flex items-center gap-3 rounded-lg px-1 py-1.5 text-[14px] hover:bg-raised">
                     <input
@@ -146,14 +155,15 @@ async function Settings() {
                       className="size-4 accent-[var(--accent)]"
                     />
                     <span>{label}</span>
-                    <span className="ml-auto font-mono text-[12px] text-muted">{cat}</span>
+                    <span className="ml-auto shrink-0 font-mono text-[12px] text-muted">{categorySource(cat)}</span>
                   </label>
                 ))}
               </div>
-            </div>
-          ))}
+            </TopicGroup>
+            );
+          })}
           <label className="mt-3 block text-[13px] text-muted">
-            Other categories (space separated)
+            Other arXiv categories (space separated)
             <input
               name="extraCategories"
               defaultValue={extra.join(" ")}
@@ -165,7 +175,7 @@ async function Settings() {
 
         <section className="px-4 py-4">
           <h2 className={sectionTitle}>Other sources</h2>
-          <p className={hint}>Checked on every run alongside your arXiv categories. Only the best matches get written up.</p>
+          <p className={hint}>Checked on every run alongside your topics. Only the best matches get written up.</p>
           <div className="mt-3 grid gap-2">
             <label className="flex items-start gap-3 px-1 text-[14px]">
               <input

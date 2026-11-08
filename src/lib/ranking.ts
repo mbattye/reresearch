@@ -1,4 +1,5 @@
 import type { Keyword, ScoreReason } from "./db/schema";
+import { topicsOf, type TopicId } from "./topics";
 
 /**
  * Deliberately simple and explainable: a paper's interest score is the sum of
@@ -53,20 +54,38 @@ function containsTerm(haystack: string, term: string): boolean {
  * Pick `limit` papers from a best-first list without filling every slot with near-duplicates
  * (a burst of papers on one result) or with discovered papers: trending and recommended papers
  * share at most half the slots, so new submissions in the reader's categories always get a look in.
+ *
+ * Slots go round the reader's topics in turn, those with the fewest recent threads first, so a
+ * topic their keywords don't mention (say, chemistry for a physicist) still gets written up.
  */
-export function diversify<T extends { title: string; score: number; foundVia: string; requested: boolean }>(
-  ranked: T[],
-  limit: number,
-): T[] {
+export function diversify<
+  T extends { title: string; score: number; foundVia: string; requested: boolean; categories: string[] },
+>(ranked: T[], limit: number, balance?: { topics: TopicId[]; recent: Map<TopicId, number> }): T[] {
   const discoveredCap = Math.max(1, Math.ceil(limit / 2));
   const isDiscovered = (p: T) => p.foundVia === "inspire" || p.foundVia === "semantic-scholar";
+  const turnOf = (p: T): string | null => {
+    if (isDiscovered(p)) return "discovered";
+    return topicsOf(p.categories).find((t) => balance?.topics.includes(t)) ?? null;
+  };
   const picked: T[] = [];
   const pool = [...ranked];
   while (picked.length < limit && pool.length) {
+    const eligible = (p: T) => p.requested || !isDiscovered(p) || picked.filter(isDiscovered).length < discoveredCap;
+    // Whose turn it is: the topic with the fewest picks this run, then the fewest recent threads.
+    // Discovered papers go after the reader's own topics, and ties are drawn so no topic always wins.
+    const waiting = new Set(pool.filter(eligible).map(turnOf).filter((t) => t !== null));
+    const picks = (t: string) => picked.filter((p) => turnOf(p) === t).length;
+    const recent = (t: string) => (t === "discovered" ? Infinity : (balance?.recent.get(t as TopicId) ?? 0));
+    const draw = new Map([...waiting].map((t) => [t, Math.random()]));
+    const turn = balance
+      ? [...waiting].sort((a, b) => picks(a) - picks(b) || recent(a) - recent(b) || draw.get(a)! - draw.get(b)!)[0]
+      : undefined;
+
     let best = -1;
     let bestScore = -Infinity;
     pool.forEach((p, i) => {
-      if (!p.requested && isDiscovered(p) && picked.filter(isDiscovered).length >= discoveredCap) return;
+      if (!eligible(p)) return;
+      if (turn && !p.requested && turnOf(p) !== turn) return;
       const overlap = Math.max(0, ...picked.map((q) => titleOverlap(p.title, q.title)));
       const adjusted = (p.requested ? 100 : 0) + p.score - 6 * overlap;
       if (adjusted > bestScore) {

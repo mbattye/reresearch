@@ -1,6 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useActionState, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { fetchPapers, type FetchState } from "@/app/actions";
@@ -12,6 +13,7 @@ import { RefreshIcon } from "./icons";
  */
 export function FetchButton({ variant = "pill" }: { variant?: "pill" | "icon" }) {
   const router = useRouter();
+  const onFeed = usePathname() === "/";
   const [state, action, pending] = useActionState<FetchState, FormData>(fetchPapers, null);
   // The toast is the latest result until it is dismissed or times out.
   const [dismissed, setDismissed] = useState<FetchState>(null);
@@ -19,7 +21,8 @@ export function FetchButton({ variant = "pill" }: { variant?: "pill" | "icon" })
 
   useEffect(() => {
     if (!state) return;
-    const hide = setTimeout(() => setDismissed(state), 8000);
+    // Longer away from the feed: there's a link to follow, and the page gives no other sign it worked.
+    const hide = setTimeout(() => setDismissed(state), onFeed ? 8000 : 30_000);
     if (!state.ok) return () => clearTimeout(hide);
     const tick = setInterval(() => router.refresh(), 6000);
     const stop = setTimeout(() => clearInterval(tick), 150_000);
@@ -28,7 +31,7 @@ export function FetchButton({ variant = "pill" }: { variant?: "pill" | "icon" })
       clearInterval(tick);
       clearTimeout(stop);
     };
-  }, [state, router]);
+  }, [state, router, onFeed]);
 
   return (
     <>
@@ -64,7 +67,14 @@ export function FetchButton({ variant = "pill" }: { variant?: "pill" | "icon" })
                 toast.ok ? "bg-fg text-bg" : "bg-like text-white"
               }`}
             >
-              <p className="leading-snug">{toast.message}</p>
+              <div>
+                <p className="leading-snug">{toast.message}</p>
+                {toast.ok && !onFeed && (
+                  <Link href="/" className="mt-1.5 inline-block font-semibold underline underline-offset-2">
+                    Jump to For you
+                  </Link>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => setDismissed(state)}

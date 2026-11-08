@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, inArray, isNull, lt, ne, notExists, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, lt, ne, notExists, or, sql } from "drizzle-orm";
 import { isAdmin } from "./auth-config";
 import { getDb, schema } from "./db";
 import type { NewPaper, Paper, Preferences, Provider } from "./db/schema";
@@ -9,9 +9,10 @@ import { costUsd } from "./pricing";
 import { providerLabel } from "./providers";
 import { diversify, interestScore } from "./ranking";
 import { fetchByIds, fetchRecent, parseArxivId } from "./sources/arxiv";
+import { fetchBiorxiv } from "./sources/biorxiv";
 import { fetchTrending } from "./sources/inspire";
 import { inspireDetails } from "./sources/metadata";
-import { lookupDoi } from "./sources/openalex";
+import { fetchRecentBySubfields, lookupDoi } from "./sources/openalex";
 import { recommend } from "./sources/semanticscholar";
 import { doiCandidateToPaper, parseDoi, type Candidate } from "./sources/types";
 import {
@@ -27,7 +28,7 @@ import {
   type SummaryConfig,
   type SummaryResult,
 } from "./summarise";
-import { DEFAULT_CATEGORIES, DEFAULT_KEYWORDS, DEFAULT_SUMMARIES_PER_RUN } from "./topics";
+import { DEFAULT_CATEGORIES, DEFAULT_KEYWORDS, DEFAULT_SUMMARIES_PER_RUN, topicsOf, type TopicId } from "./topics";
 
 const { papers, threads, threadJobs, userPapers, userSettings, userTerms, summaryBatches } = schema;
 
@@ -178,7 +179,7 @@ export async function ingest(
   await scoreForReader(reader.id, prefs, all.map((p) => p.id));
   await rescoreWaiting(reader.id, prefs);
 
-  const picks = await pickWaiting(reader.id, prefs.readingLevel, opts.summarise ?? prefs.summariesPerRun);
+  const picks = await pickWaiting(reader.id, prefs, opts.summarise ?? prefs.summariesPerRun);
   const base = { fetched: fetched.length, discovered: discovered.length, sourceErrors: errors, inserted };
 
   if (opts.defer) return { ...base, summarised: [], failed: [], picked: picks.map((p) => p.id) };
@@ -192,36 +193,63 @@ export async function ingest(
 }
 
 /** Papers in this reader's set with no thread at any level yet and nothing in progress, best first. */
-async function pickWaiting(userId: string, level: number, limit: number): Promise<Paper[]> {
+async function pickWaiting(userId: string, prefs: Preferences, limit: number): Promise<Paper[]> {
+  const db = await getDb();
+  const level = prefs.readingLevel;
+  const waiting = () =>
+    db
+      .select({ paper: papers, score: userPapers.score, requested: userPapers.requested })
+      .from(userPapers)
+      .innerJoin(papers, eq(papers.id, userPapers.paperId))
+      .where(
+        and(
+          eq(userPapers.userId, userId),
+          eq(userPapers.hidden, false),
+          notExists(db.select().from(threads).where(eq(threads.paperId, userPapers.paperId))),
+          // Anything in progress at this level blocks a pick; a failure only blocks the reader it failed for.
+          notExists(
+            db
+              .select()
+              .from(threadJobs)
+              .where(
+                and(
+                  eq(threadJobs.paperId, userPapers.paperId),
+                  eq(threadJobs.readingLevel, level),
+                  or(ne(threadJobs.status, "failed"), eq(threadJobs.userId, userId)),
+                ),
+              ),
+          ),
+        ),
+      );
+  // The newest too, or a topic the reader's keywords don't mention would drop out of a long queue.
+  const [best, newest] = await Promise.all([
+    waiting().orderBy(desc(userPapers.requested), desc(userPapers.score), desc(papers.publishedAt)).limit(400),
+    waiting().orderBy(desc(papers.publishedAt)).limit(200),
+  ]);
+  const ranked = [...new Map([...best, ...newest].map((r) => [r.paper.id, r])).values()]
+    .map((r) => ({ ...r.paper, score: r.score, requested: r.requested }))
+    .sort(
+      (a, b) =>
+        Number(b.requested) - Number(a.requested) || b.score - a.score || b.publishedAt.getTime() - a.publishedAt.getTime(),
+    );
+  return diversify(ranked, limit, {
+    topics: [...new Set(prefs.categories.flatMap((c) => topicsOf([c])))],
+    recent: await recentThreadsByTopic(userId),
+  });
+}
+
+/** How many threads each topic has given this reader in the last fortnight. */
+async function recentThreadsByTopic(userId: string): Promise<Map<TopicId, number>> {
   const db = await getDb();
   const rows = await db
-    .select({ paper: papers, score: userPapers.score, requested: userPapers.requested })
-    .from(userPapers)
-    .innerJoin(papers, eq(papers.id, userPapers.paperId))
-    .where(
-      and(
-        eq(userPapers.userId, userId),
-        eq(userPapers.hidden, false),
-        notExists(db.select().from(threads).where(eq(threads.paperId, userPapers.paperId))),
-        // Anything in progress at this level blocks a pick; a failure only blocks the reader it failed for.
-        notExists(
-          db
-            .select()
-            .from(threadJobs)
-            .where(
-              and(
-                eq(threadJobs.paperId, userPapers.paperId),
-                eq(threadJobs.readingLevel, level),
-                or(ne(threadJobs.status, "failed"), eq(threadJobs.userId, userId)),
-              ),
-            ),
-        ),
-      ),
-    )
-    .orderBy(desc(userPapers.requested), desc(userPapers.score), desc(papers.publishedAt))
-    .limit(400);
-  const ranked = rows.map((r) => ({ ...r.paper, score: r.score, requested: r.requested }));
-  return diversify(ranked, limit);
+    .select({ categories: papers.categories })
+    .from(threads)
+    .innerJoin(papers, eq(papers.id, threads.paperId))
+    .innerJoin(userPapers, and(eq(userPapers.paperId, threads.paperId), eq(userPapers.userId, userId)))
+    .where(gt(threads.createdAt, new Date(Date.now() - 14 * 86_400_000)));
+  const counts = new Map<TopicId, number>();
+  for (const { categories } of rows) for (const t of topicsOf(categories)) counts.set(t, (counts.get(t) ?? 0) + 1);
+  return counts;
 }
 
 async function scoreForReader(userId: string, prefs: Preferences, paperIds: string[]) {
@@ -273,7 +301,7 @@ async function clearStaleJobs() {
 /** Candidates from the discovery sources this reader has switched on. One failing source doesn't stop the others. */
 async function discover(reader: Reader, prefs: Preferences): Promise<{ candidates: Candidate[]; errors: string[] }> {
   const db = await getDb();
-  const jobs: Promise<Candidate[]>[] = [];
+  const jobs: Promise<Candidate[]>[] = [fetchBiorxiv(prefs.categories), fetchRecentBySubfields(prefs.categories)];
   if (prefs.sources.inspireTrending) jobs.push(fetchTrending());
   if (prefs.sources.recommendations) {
     const signals = await db
@@ -322,6 +350,7 @@ export async function resolveCandidates(list: Candidate[]): Promise<NewPaper[]> 
       foundVia: c.foundVia,
       boost: c.boost,
       boostReasons: c.boostReasons,
+      categories: [...new Set([...p.categories, ...(c.categories ?? [])])],
       institutions: c.institutions ?? [],
       license: c.license ?? null,
       licenseUrl: c.licenseUrl ?? null,
@@ -331,9 +360,13 @@ export async function resolveCandidates(list: Candidate[]): Promise<NewPaper[]> 
   if (doiOnly.length) {
     const db = await getDb();
     const known = new Set(
-      (await db.select({ doi: papers.doi }).from(papers).where(inArray(papers.doi, doiOnly.map((c) => c.doi!)))).map(
-        (r) => r.doi,
-      ),
+      // Only arXiv copies: a paper stored under its DOI still has to reach each new reader.
+      (
+        await db
+          .select({ doi: papers.doi })
+          .from(papers)
+          .where(and(inArray(papers.doi, doiOnly.map((c) => c.doi!)), ne(papers.source, "doi")))
+      ).map((r) => r.doi),
     );
     for (const p of fromArxiv) if (p.doi) known.add(p.doi);
     for (const c of doiOnly) {
@@ -450,15 +483,13 @@ async function summariseMany(reader: Reader, list: Paper[]) {
 }
 
 /** Claim (paper, level) so nobody writes it twice; false if a thread or a job already exists. */
-async function claimJob(paperId: string, level: number, userId: string, status: "writing" | "batched", force = false) {
+async function claimJob(paperId: string, level: number, userId: string, status: "writing" | "batched") {
   const db = await getDb();
-  if (!force) {
-    const [existing] = await db
-      .select({ paperId: threads.paperId })
-      .from(threads)
-      .where(and(eq(threads.paperId, paperId), eq(threads.readingLevel, level)));
-    if (existing) return false;
-  }
+  const [existing] = await db
+    .select({ paperId: threads.paperId })
+    .from(threads)
+    .where(and(eq(threads.paperId, paperId), eq(threads.readingLevel, level)));
+  if (existing) return false;
   const claimed = await db
     .insert(threadJobs)
     .values({ paperId, readingLevel: level, status, userId, updatedAt: new Date() })
@@ -472,8 +503,14 @@ async function claimJob(paperId: string, level: number, userId: string, status: 
   return claimed.length > 0;
 }
 
-async function writeThread(reader: Reader, prefs: Preferences, config: SummaryConfig, paper: Paper, force = false) {
-  if (!(await claimJob(paper.id, config.level, reader.id, "writing", force))) return false;
+async function writeThread(
+  reader: Reader,
+  prefs: Preferences,
+  config: SummaryConfig,
+  paper: Paper,
+  { claimed = false } = {},
+) {
+  if (!claimed && !(await claimJob(paper.id, config.level, reader.id, "writing"))) return false;
   try {
     await assertWithinBudget(reader, prefs);
     const key = await requireKey(reader, config.provider);
@@ -488,13 +525,22 @@ async function writeThread(reader: Reader, prefs: Preferences, config: SummaryCo
   }
 }
 
-/** Write one paper again at the reader's level, replacing an existing thread at that level. */
+/**
+ * Mark a rewrite as under way, so the page that asked for it can show that straight away.
+ * False if one is running or that level is already written: a saved thread is never paid for twice.
+ */
+export async function claimRewrite(reader: Reader, paperId: string): Promise<boolean> {
+  const prefs = await getPreferences(reader);
+  return claimJob(paperId, prefs.readingLevel, reader.id, "writing");
+}
+
+/** Write one paper at the reader's level (claimed with claimRewrite), keeping the versions at other levels. */
 export async function rewriteForReader(reader: Reader, paperId: string) {
   const db = await getDb();
   const [paper] = await db.select().from(papers).where(eq(papers.id, paperId));
   if (!paper) return;
   const prefs = await getPreferences(reader);
-  await writeThread(reader, prefs, summaryConfigFor(prefs), paper, true).catch(() => undefined);
+  await writeThread(reader, prefs, summaryConfigFor(prefs), paper, { claimed: true }).catch(() => undefined);
 }
 
 /** Send papers to the Message Batches API (50% off; results usually within the hour, always within 24h). */

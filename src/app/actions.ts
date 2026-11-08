@@ -14,6 +14,7 @@ import { markRead, setFlag } from "@/lib/feed";
 import { deleteKey, saveKey } from "@/lib/keys";
 import {
   canWrite,
+  claimRewrite,
   collectBatches,
   getPreferences,
   ingest,
@@ -99,7 +100,7 @@ export async function addPapers(_prev: AddPaperState, formData: FormData): Promi
 /** Write a thread at the reader's current level, replacing any there; the page updates when done. */
 export async function rewriteThread(paperId: string) {
   const reader = await requireUser();
-  after(() => rewriteForReader(reader, paperId));
+  if (await claimRewrite(reader, paperId)) after(() => rewriteForReader(reader, paperId));
   refresh();
 }
 
@@ -161,7 +162,7 @@ export async function savePreferences(formData: FormData) {
   await db
     .update(schema.userSettings)
     .set({
-      categories: [...new Set(categories)].slice(0, 30),
+      categories: [...new Set(categories)].slice(0, 100),
       keywords: keywords.slice(0, 100),
       summariesPerRun,
       summaryProvider: provider,
@@ -238,7 +239,7 @@ const HOUR = 60 * MINUTE;
 
 async function sendLink(email: string, invite = false) {
   const auth = await getAuth();
-  await auth.api.signInMagicLink({ body: { email, callbackURL: "/", metadata: { invite } }, headers: await headers() });
+  await auth.api.signInMagicLink({ body: { email, callbackURL: "/", errorCallbackURL: "/login?link=expired", metadata: { invite } }, headers: await headers() });
 }
 
 /**

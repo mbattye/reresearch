@@ -43,7 +43,7 @@ export interface ScoreReason {
 }
 
 /** Where a paper was discovered. */
-export type FoundVia = "arxiv" | "inspire" | "semantic-scholar" | "openalex" | "request";
+export type FoundVia = "arxiv" | "biorxiv" | "inspire" | "semantic-scholar" | "openalex" | "request";
 
 export const papers = pgTable(
   "papers",

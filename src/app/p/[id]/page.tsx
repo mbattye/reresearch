@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import { connection } from "next/server";
 import { ActionBar } from "@/components/ActionBar";
 import { Avatar } from "@/components/Avatar";
-import { BackIcon } from "@/components/icons";
+import { BackToFeed } from "@/components/BackToFeed";
 import { MarkRead } from "@/components/MarkRead";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { WriteOnOpen } from "@/components/WriteOnOpen";
@@ -20,10 +20,10 @@ import { SECTION_LABELS, creditLine } from "@/lib/format";
 import { formatUsd } from "@/lib/pricing";
 import { CATEGORY_LABELS, categoryShort } from "@/lib/topics";
 
-export default function ThreadPage({ params }: PageProps<"/p/[id]">) {
+export default function ThreadPage({ params, searchParams }: PageProps<"/p/[id]">) {
   return (
     <Suspense fallback={<TopBar />}>
-      <Thread params={params} />
+      <Thread params={params} searchParams={searchParams} />
     </Suspense>
   );
 }
@@ -31,23 +31,26 @@ export default function ThreadPage({ params }: PageProps<"/p/[id]">) {
 function TopBar() {
   return (
     <header className="sticky top-0 z-20 flex h-12 items-center gap-6 border-b border-line bg-bg/85 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-md">
-      <Link href="/" className="-m-2 p-2" aria-label="Back to feed">
-        <BackIcon className="size-5" />
-      </Link>
+      <BackToFeed />
       <span className="text-[17px] font-bold">Thread</span>
     </header>
   );
 }
 
-async function Thread({ params }: Pick<PageProps<"/p/[id]">, "params">) {
+async function Thread({ params, searchParams }: Pick<PageProps<"/p/[id]">, "params" | "searchParams">) {
   await connection();
   const { id } = await params;
   const reader = await requireUser();
   const { readingLevel } = await getPreferences(reader);
   const item = await getPaperView(reader.id, decodeURIComponent(id), readingLevel);
   if (!item) notFound();
-  const { paper, thread, interaction, job } = item;
-  if (!thread) return <PendingThread paper={paper} job={job} canWrite={await canWrite(reader)} />;
+  const { paper, thread: closest, saved, interaction, job } = item;
+  if (!closest) return <PendingThread paper={paper} job={job} canWrite={await canWrite(reader)} />;
+  // ?level= opens another saved version, without changing the reader's setting or costing anything.
+  const asked = Number((await searchParams).level);
+  const thread = saved.find((t) => t.readingLevel === asked) ?? closest;
+  const others = saved.filter((t) => t.readingLevel !== thread.readingLevel).sort((a, b) => a.readingLevel - b.readingLevel);
+  const writtenAtMyLevel = saved.some((t) => t.readingLevel === readingLevel);
   const rewriting = !!job && job.status !== "failed";
   const date = formatDate(paper.publishedAt);
 
@@ -142,9 +145,24 @@ async function Thread({ params }: Pick<PageProps<"/p/[id]">, "params">) {
             {rewriting ? (
               <span className="animate-pulse text-accent">Rewriting at {levelName(readingLevel)}…</span>
             ) : (
-              thread.readingLevel !== readingLevel && <RewriteButton paperId={paper.id} levelName={levelName(readingLevel)} />
+              !writtenAtMyLevel && <RewriteButton paperId={paper.id} levelName={levelName(readingLevel)} />
             )}
           </div>
+          {others.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[13px]">
+              <span className="text-muted">Also saved, free to read:</span>
+              {others.map((t) => (
+                <Link
+                  key={t.readingLevel}
+                  replace
+                  href={`/p/${encodeURIComponent(paper.id)}?level=${t.readingLevel}`}
+                  className="rounded-full border border-line px-2.5 py-1 transition hover:bg-raised active:scale-95"
+                >
+                  {levelName(t.readingLevel)}
+                </Link>
+              ))}
+            </div>
+          )}
           <p className="mt-3 text-[12px] text-muted">
             Written by {thread.model} from the {INPUT_LABELS[thread.inputMode] ?? thread.inputMode}
             {thread.costUsd != null && ` for ${formatUsd(thread.costUsd)}${thread.batched ? " (batched)" : ""}`}. Check

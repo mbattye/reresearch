@@ -24,6 +24,8 @@ export interface Candidate {
   institutions?: string[];
   license?: string;
   licenseUrl?: string;
+  /** Topic categories from the source, e.g. "biorxiv:genomics". */
+  categories?: string[];
 }
 
 export function normaliseDoi(doi: string): string {
@@ -50,8 +52,8 @@ export function doiCandidateToPaper(c: Candidate): NewPaper | null {
     title: c.title,
     authors: c.authors,
     abstract: c.abstract ?? "",
-    categories: [],
-    primaryCategory: null,
+    categories: c.categories ?? [],
+    primaryCategory: c.categories?.[0] ?? null,
     publishedAt: c.publishedAt ?? new Date(),
     absUrl: c.absUrl ?? `https://doi.org/${c.doi}`,
     pdfUrl: c.pdfUrl ?? null,

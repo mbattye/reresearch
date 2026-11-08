@@ -100,7 +100,7 @@ function FirstFetch({ close }: { close: () => void }) {
       </h2>
       <p className="mt-2 text-[14px] leading-snug">
         Every morning reresearch fetches new papers and writes up the best few. You start with particle physics, quantum
-        and fusion. AI topics, your interests and how much background threads assume are all in Settings.
+        and fusion. AI, chemistry, biology, your interests and how much background threads assume are all in Settings.
       </p>
       <form action={action} className="mt-4">
         <button disabled={pending} className={`${primary} w-full`}>

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { RememberFeed } from "@/components/BackToFeed";
 import { BatchCollector } from "@/components/BatchCollector";
 import { Header } from "@/components/Header";
 import { PostCard } from "@/components/PostCard";
@@ -16,6 +17,7 @@ import { FetchButton } from "@/components/FetchButton";
 export const maxDuration = 300;
 
 const TAB_IDS: FeedTab[] = ["foryou", "latest", "saved", "queue"];
+const QUEUE_SHOWN = 150;
 
 export default function Home({ searchParams }: PageProps<"/">) {
   return (
@@ -49,6 +51,7 @@ async function HomeContent({ searchParams }: Pick<PageProps<"/">, "searchParams"
   return (
     <>
       <Header tab={tab} topic={topic} topics={topics} total={all.length} />
+      <RememberFeed />
       {!prefs.welcomedAt && <Welcome hasKey={hasKey} />}
       <AutoRefresh active={summarising || tab === "queue"} />
       <BatchCollector active={(counts.batched ?? 0) > 0} />
@@ -118,7 +121,7 @@ function Queue({ items, topic }: { items: QueueItem[]; topic: TopicId | null }) 
       ) : items.length === 0 ? (
         <p className="px-4 py-10 text-center text-[14px] text-muted">Nothing queued. Fetch new papers to fill it.</p>
       ) : (
-        <QueueList items={items} />
+        <QueueList items={items.slice(0, QUEUE_SHOWN)} />
       )}
     </main>
   );
@@ -149,7 +152,7 @@ function EmptyState({ tab, hasKey }: { tab: FeedTab; hasKey: boolean }) {
     <div className="px-6 py-16 text-center">
       <p className="text-[17px] font-semibold">Your feed is empty</p>
       <p className="mt-1 text-[14px] text-muted">
-        Fetch the latest papers from your arXiv categories and the best matches get written up as threads.
+        Fetch the latest papers in your topics and the best matches get written up as threads.
       </p>
       <div className="mt-5 flex justify-center">
         <FetchButton />

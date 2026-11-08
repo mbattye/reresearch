@@ -31,13 +31,83 @@ const AI_CATEGORIES: Record<string, string> = {
   "cs.NE": "Neural & evolutionary computing",
 };
 
-/** arXiv categories offered in settings. Any other valid arXiv category can be typed in too. */
+// arXiv has one chemistry category; the rest are OpenAlex subfields, open-access papers only.
+const CHEMISTRY_CATEGORIES: Record<string, string> = {
+  "physics.chem-ph": "Chemical physics",
+  "openalex:1605": "Organic chemistry",
+  "openalex:1604": "Inorganic chemistry",
+  "openalex:1606": "Physical & theoretical chemistry",
+  "openalex:1602": "Analytical chemistry",
+  "openalex:1603": "Electrochemistry",
+  "openalex:1607": "Spectroscopy",
+  "openalex:2505": "Materials chemistry",
+};
+
+// bioRxiv's subject areas.
+const BIOLOGY_CATEGORIES: Record<string, string> = {
+  "biorxiv:animal behavior and cognition": "Animal behaviour & cognition",
+  "biorxiv:biochemistry": "Biochemistry",
+  "biorxiv:bioengineering": "Bioengineering",
+  "biorxiv:bioinformatics": "Bioinformatics",
+  "biorxiv:biophysics": "Biophysics",
+  "biorxiv:cancer biology": "Cancer biology",
+  "biorxiv:cell biology": "Cell biology",
+  "biorxiv:developmental biology": "Developmental biology",
+  "biorxiv:ecology": "Ecology",
+  "biorxiv:evolutionary biology": "Evolutionary biology",
+  "biorxiv:genetics": "Genetics",
+  "biorxiv:genomics": "Genomics",
+  "biorxiv:immunology": "Immunology",
+  "biorxiv:microbiology": "Microbiology",
+  "biorxiv:molecular biology": "Molecular biology",
+  "biorxiv:neuroscience": "Neuroscience",
+  "biorxiv:paleontology": "Palaeontology",
+  "biorxiv:pathology": "Pathology",
+  "biorxiv:pharmacology and toxicology": "Pharmacology & toxicology",
+  "biorxiv:physiology": "Physiology",
+  "biorxiv:plant biology": "Plant biology",
+  "biorxiv:scientific communication and education": "Science communication & education",
+  "biorxiv:synthetic biology": "Synthetic biology",
+  "biorxiv:systems biology": "Systems biology",
+  "biorxiv:zoology": "Zoology",
+};
+
+const QUANTITATIVE_BIOLOGY_CATEGORIES: Record<string, string> = {
+  "q-bio.BM": "Biomolecules",
+  "q-bio.CB": "Cell behaviour",
+  "q-bio.GN": "Genomics",
+  "q-bio.MN": "Molecular networks",
+  "q-bio.NC": "Neurons & cognition",
+  "q-bio.PE": "Populations & evolution",
+  "q-bio.QM": "Quantitative methods",
+  "q-bio.SC": "Subcellular processes",
+  "q-bio.TO": "Tissues & organs",
+  "q-bio.OT": "Other quantitative biology",
+  "physics.bio-ph": "Biological physics",
+};
+
+/** Categories offered in settings. Any other valid arXiv category can be typed in too. */
 export const CATEGORY_GROUPS = [
   { name: "Physics", labels: PHYSICS_CATEGORIES },
   { name: "AI", labels: AI_CATEGORIES },
+  { name: "Chemistry", labels: CHEMISTRY_CATEGORIES },
+  { name: "Biology", labels: BIOLOGY_CATEGORIES },
+  { name: "Quantitative biology", labels: QUANTITATIVE_BIOLOGY_CATEGORIES },
 ];
 
-export const CATEGORY_LABELS: Record<string, string> = { ...PHYSICS_CATEGORIES, ...AI_CATEGORIES };
+export const CATEGORY_LABELS: Record<string, string> = Object.assign({}, ...CATEGORY_GROUPS.map((g) => g.labels));
+
+/** arXiv's own category codes, leaving out those fetched from other sources. */
+export function isArxivCategory(category: string): boolean {
+  return !category.includes(":");
+}
+
+/** The code or source shown beside a category in settings. */
+export function categorySource(category: string): string {
+  if (category.startsWith("biorxiv:")) return "bioRxiv";
+  if (category.startsWith("openalex:")) return "journals";
+  return category;
+}
 
 export const DEFAULT_CATEGORIES = [
   "hep-ex",
@@ -92,6 +162,8 @@ export function keywordLine(k: Keyword): string {
 
 export function categoryShort(cat: string | null | undefined): string {
   if (!cat) return "paper";
+  if (cat.startsWith("biorxiv:")) return cat.slice("biorxiv:".length);
+  if (cat.startsWith("openalex:")) return (CATEGORY_LABELS[cat] ?? "chemistry").split(" ")[0].toLowerCase();
   return cat.replace(/^physics\./, "").replace(/^astro-ph\./, "astro-");
 }
 
@@ -116,6 +188,8 @@ export const TOPICS = [
   { id: "fusion", label: "Fusion & plasma", match: /^physics\.plasm-ph$/ },
   { id: "astro", label: "Astro & gravity", match: /^astro-ph|^gr-qc$/ },
   { id: "matter", label: "Condensed matter", match: /^cond-mat/ },
+  { id: "chemistry", label: "Chemistry", match: /^physics\.chem-ph$|^openalex:/ },
+  { id: "biology", label: "Biology", match: /^q-bio|^physics\.bio-ph$|^biorxiv:/ },
   { id: "ai", label: "AI", match: /^(cs\.(AI|LG|CL|CV|RO|MA|NE)|stat\.ML)$/ },
 ] as const;
 
