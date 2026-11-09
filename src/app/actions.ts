@@ -5,7 +5,7 @@ import { refresh } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
-import { allowAttempt, clearRequest, clientIp, declineRequest, recordRequest } from "@/lib/access";
+import { allowAttempt, clearRequest, clientIp, declineRequest, forgetEmail, recordRequest } from "@/lib/access";
 import { accountExists, ensureAccount, getAuth, requireUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth-config";
 import { getDb, schema } from "@/lib/db";
@@ -354,6 +354,19 @@ export async function rejectRequest(email: string) {
   if (!reader.isAdmin) return;
   await declineRequest(email);
   refresh();
+}
+
+/** A reader deleting their own account. Admins are set by ADMIN_EMAILS, and would just be recreated. */
+export async function deleteAccount() {
+  const reader = await requireUser();
+  if (reader.isAdmin) return;
+  const auth = await getAuth();
+  await auth.api.signOut({ headers: await headers() });
+  const db = await getDb();
+  // Cascades to their sessions, settings, keys, likes and jobs; threads they paid for stay shared.
+  await db.delete(schema.user).where(eq(schema.user.id, reader.id));
+  await forgetEmail(reader.email);
+  redirect("/login?account=deleted");
 }
 
 export async function removeReader(userId: string) {

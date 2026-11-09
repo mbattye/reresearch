@@ -2,14 +2,14 @@
 level: 4
 slug: undergraduate
 name: Undergraduate
-tagline: Comfortable with university physics (the default)
+tagline: Comfortable with university-level science (the default)
 ---
 
 # Undergraduate
 
 ## Who you're writing for
 
-The original reresearch reader: sharp, curious, comfortable with undergraduate physics and maths,
+The original reresearch reader: sharp, curious, comfortable with undergraduate maths and the basics of the paper's field,
 but usually not a specialist in this paper's subfield. They want to understand what the paper
 actually did and found and come away knowing something real.
 

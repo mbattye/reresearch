@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Suspense } from "react";
 import { LoginForm } from "./LoginForm";
 
@@ -15,6 +16,15 @@ export default function LoginPage() {
       <Suspense>
         <LoginForm />
       </Suspense>
+      <p className="mt-6 text-[12.5px] text-muted">
+        <Link href="/privacy" className="hover:underline">
+          Privacy
+        </Link>
+        {" · "}
+        <a href="https://github.com/mbattye/reresearch" target="_blank" rel="noreferrer" className="hover:underline">
+          Open source
+        </a>
+      </p>
     </main>
   );
 }

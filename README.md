@@ -44,7 +44,7 @@ Open http://localhost:3000 and enter that email. Without `RESEND_API_KEY` the si
 
 1. Create a Postgres database (Neon free tier is fine) and import this repo into Vercel.
 2. Set environment variables (see `.env.example`): `DATABASE_URL`, `CRON_SECRET`, `ADMIN_EMAILS`, `BETTER_AUTH_SECRET`, `KEY_ENCRYPTION_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`, and optionally `ANTHROPIC_API_KEY` as the admins' fallback key and `OPENALEX_API_KEY` for your own OpenAlex allowance (chemistry and DOI lookups).
-3. Deploy. `vercel-build` runs the migrations, and `vercel.json` schedules a daily fetch at 06:00 UTC.
+3. Deploy. `vercel-build` runs the migrations, and `vercel.json` schedules a daily fetch at 06:00 UTC. That job gives each reader with a key their own function (`/api/cron/reader`), and hands on to a fresh copy of itself if there are too many to start in one go.
 4. On your phone, open the site, request a sign-in link with an admin email, then Share → Add to Home Screen. Invite others from Settings.
 
 ## Reading levels
@@ -63,6 +63,7 @@ Every thread page has an "Original paper" block: the full author list (or the co
 - **Invite only, with a waitlist.** Admins (`ADMIN_EMAILS`) invite people from Settings, which creates their account and emails a link. Anyone else can request access from the login page: requests appear in Settings to approve or decline, and the daily run emails admins a digest of new ones. Nothing is sent to the person until they're approved. Sign-up is otherwise switched off, sign-in and requests are rate limited, and both forms give the same reply whether or not an email has access.
 - **Readers bring their own key** for Anthropic, OpenAI or OpenRouter (Claude, GPT, Gemini, Grok and others). New readers get a welcome on the feed that walks them through adding one. Keys are checked with a free request, encrypted with AES-256-GCM bound to the reader's id, decrypted only to make a call, and never sent back to the browser (Settings shows `…a1b2`). Admins can fall back to the deployment's `ANTHROPIC_API_KEY`.
 - **What's shared and what isn't.** Papers and threads are shared: a thread is written once per paper and reading level, by whoever's key gets there first, and is free for everyone else at that level. Interests, likes, saves, learned ranking, the queue, budget and spend are per reader.
+- **Your data**: a public privacy notice at `/privacy`, and readers can delete their own account from Settings.
 - **Before accounts**, everything belonged to one reader; the first admin to sign in inherits it.
 
 ## Security

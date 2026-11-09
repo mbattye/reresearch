@@ -212,6 +212,8 @@ export const userSettings = pgTable("user_settings", {
   ...settingsColumns,
   // When they finished or skipped the welcome; until then the feed opens with it.
   welcomedAt: timestamp("welcomed_at", { withTimezone: true }),
+  // When the daily run last took this reader, so a repeated or continued run doesn't do them twice.
+  lastDailyRunAt: timestamp("last_daily_run_at", { withTimezone: true }),
 });
 
 /** Legacy single-reader settings (row id = 1), copied into the first admin's account on first sign-in. */

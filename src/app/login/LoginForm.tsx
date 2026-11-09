@@ -10,7 +10,9 @@ export function LoginForm() {
   const [access, accessAction, requesting] = useActionState(requestAccess, null);
   const state = asking ? access : signIn;
   const pending = asking ? requesting : signingIn;
-  const linkExpired = useSearchParams().get("link") === "expired";
+  const params = useSearchParams();
+  const linkExpired = params.get("link") === "expired";
+  const deleted = params.get("account") === "deleted";
   if (state?.ok) {
     return (
       <div className="mt-6 rounded-2xl bg-accent-soft px-4 py-4 text-[15px] leading-snug text-accent" role="status">
@@ -21,6 +23,11 @@ export function LoginForm() {
   }
   return (
     <form action={asking ? accessAction : signInAction} className="mt-6 space-y-3">
+      {deleted && (
+        <p role="status" className="rounded-lg bg-accent-soft px-3 py-2 text-[13px] text-accent">
+          Your account and data have been deleted.
+        </p>
+      )}
       {linkExpired && !asking && (
         <p role="alert" className="rounded-lg bg-accent-soft px-3 py-2 text-[13px] text-accent">
           That link has expired or was already used. Enter your email for a new one.

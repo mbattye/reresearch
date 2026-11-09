@@ -50,6 +50,8 @@ export interface Reader {
 // A thread that has been "writing" this long died with its function; let it be retried.
 const STALE_JOB_MS = 10 * 60 * 1000;
 const SUMMARY_CONCURRENCY = 3;
+// Live write-ups have to finish inside one function's 300 seconds; batches don't.
+const MAX_LIVE_WRITES = 8;
 
 // ---------------------------------------------------------------------------------------------
 // Settings
@@ -188,12 +190,14 @@ export async function ingest(
   await scoreForReader(reader.id, prefs, all.map((p) => p.id));
   await rescoreWaiting(reader.id, prefs);
 
-  const picks = await pickWaiting(reader.id, prefs, opts.summarise ?? prefs.summariesPerRun);
+  const config = summaryConfigFor(prefs);
+  const batching = !!opts.batch && config.provider === "anthropic";
+  const wanted = opts.summarise ?? prefs.summariesPerRun;
+  const picks = await pickWaiting(reader.id, prefs, batching ? wanted : Math.min(wanted, MAX_LIVE_WRITES));
   const base = { fetched: fetched.length, discovered: discovered.length, sourceErrors: errors, inserted };
 
   if (opts.defer) return { ...base, summarised: [], failed: [], picked: picks.map((p) => p.id) };
-  const config = summaryConfigFor(prefs);
-  if (opts.batch && config.provider === "anthropic") {
+  if (batching) {
     const collected = await collectBatches(reader.id);
     const batchId = picks.length ? await submitBatch(reader, prefs, picks) : undefined;
     return { ...base, summarised: [], failed: [], batchId, collected };

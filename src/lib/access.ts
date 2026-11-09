@@ -48,6 +48,13 @@ export async function pendingRequests() {
     .limit(MAX_LISTED);
 }
 
+/** Removes what's kept against an email outside the account itself, when that account is deleted. */
+export async function forgetEmail(email: string) {
+  const db = await getDb();
+  await db.delete(schema.accessRequests).where(eq(schema.accessRequests.email, email));
+  await db.delete(schema.authAttempts).where(eq(schema.authAttempts.key, `link:${email}`));
+}
+
 export async function clearRequest(email: string): Promise<void> {
   const db = await getDb();
   await db.delete(accessRequests).where(eq(accessRequests.email, email));

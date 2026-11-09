@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { AccessRequestRow } from "@/components/AccessRequestRow";
@@ -5,6 +6,7 @@ import { AddPaperForm } from "@/components/AddPaperForm";
 import { BackToFeed } from "@/components/BackToFeed";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { AutoSaveForm } from "@/components/AutoSaveForm";
+import { DeleteAccount } from "@/components/DeleteAccount";
 import { FetchButton } from "@/components/FetchButton";
 import { InterestsBox } from "@/components/InterestsBox";
 import { InviteForm } from "@/components/InviteForm";
@@ -347,6 +349,18 @@ async function Settings() {
         <div className="mt-3">
           <FetchButton />
         </div>
+      </section>
+
+      <section className="px-4 py-4">
+        <h2 className={sectionTitle}>Your data</h2>
+        <p className={hint}>
+          See what&apos;s stored and who handles it in the{" "}
+          <Link href="/privacy" className="text-accent underline">
+            privacy notice
+          </Link>
+          .
+        </p>
+        {!reader.isAdmin && <DeleteAccount />}
       </section>
     </main>
   );

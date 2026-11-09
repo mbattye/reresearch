@@ -10,7 +10,7 @@ export function proxy(request: NextRequest) {
       headers: { "content-type": "text/plain; charset=utf-8" },
     });
   }
-  if (request.nextUrl.pathname.startsWith("/login")) return NextResponse.next();
+  if (["/login", "/privacy"].some((p) => request.nextUrl.pathname.startsWith(p))) return NextResponse.next();
 
   // Optimistic check only: every page and action verifies the session itself (requireUser).
   if (getSessionCookie(request)) return NextResponse.next();

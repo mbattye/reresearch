@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, inArray, ne, notExists, or, sql } from "drizzle-orm";
+import { and, desc, eq, ne, notExists, or, sql } from "drizzle-orm";
 import { getDb, schema } from "./db";
 import type { Paper, Thread, ThreadJob, UserPaper } from "./db/schema";
 import { feedRank } from "./ranking";
@@ -223,13 +223,4 @@ export async function getTopAffinities(userId: string, limit = 20) {
     .where(and(eq(userTerms.userId, userId), ne(userTerms.weight, 0)))
     .orderBy(desc(sql`abs(${userTerms.weight})`))
     .limit(limit);
-}
-
-/** Readers the daily run works for: everyone with settings, i.e. who has signed in at least once. */
-export async function activeReaders() {
-  const db = await getDb();
-  return db
-    .select({ id: schema.user.id, email: schema.user.email })
-    .from(schema.user)
-    .where(inArray(schema.user.id, db.select({ id: schema.userSettings.userId }).from(schema.userSettings)));
 }
