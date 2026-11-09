@@ -21,7 +21,7 @@ const STEPS = [
   {
     spot: "interests",
     title: "4. Fine-tune with interests",
-    body: "Optional. Terms here rank matching papers higher within your topics; a negative weight steers away. Likes and saves teach it the same way, so you can leave this alone.",
+    body: "Optional, and empty to start. Terms here rank matching papers higher within your topics. Likes and saves teach it the same way, so you can leave this alone.",
   },
   {
     spot: "writing",

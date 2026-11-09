@@ -38,8 +38,24 @@ export async function getFullText(paper: Paper): Promise<FullText | null> {
   return null;
 }
 
+// What each site's robots.txt asks for between requests. Spaced out within one server process;
+// concurrent callers each take the next free slot.
+const CRAWL_DELAY_MS: Record<string, number> = { "arxiv.org": 15_000, "www.biorxiv.org": 7_000 };
+const nextSlot = new Map<string, number>();
+
+async function waitForSite(url: string) {
+  const host = new URL(url).hostname;
+  const delay = CRAWL_DELAY_MS[host];
+  if (!delay) return;
+  const now = Date.now();
+  const slot = Math.max(now, nextSlot.get(host) ?? 0);
+  nextSlot.set(host, slot + delay);
+  if (slot > now) await new Promise((r) => setTimeout(r, slot - now));
+}
+
 export async function downloadPdf(url: string): Promise<Uint8Array | null> {
   try {
+    await waitForSite(url);
     const res = await safeFetch(url);
     if (!res.ok || !(res.headers.get("content-type") ?? "").includes("pdf")) return null;
     const buf = new Uint8Array(await res.arrayBuffer());
@@ -51,7 +67,9 @@ export async function downloadPdf(url: string): Promise<Uint8Array | null> {
 
 async function fetchArxivHtml(arxivId: string): Promise<FullText | null> {
   try {
-    const res = await safeFetch(`https://arxiv.org/html/${arxivId}`);
+    const url = `https://arxiv.org/html/${arxivId}`;
+    await waitForSite(url);
+    const res = await safeFetch(url);
     if (!res.ok) return null;
     return latexmlToText(await res.text());
   } catch {

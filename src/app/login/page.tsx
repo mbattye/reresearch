@@ -25,6 +25,10 @@ export default function LoginPage() {
           Open source
         </a>
       </p>
+      <p className="mt-2 text-[11.5px] leading-snug text-muted">
+        Papers via arXiv, bioRxiv, OpenAlex, INSPIRE-HEP and Semantic Scholar. Thank you to arXiv for use of its open access
+        interoperability. reresearch isn&apos;t affiliated with or endorsed by any of them.
+      </p>
     </main>
   );
 }

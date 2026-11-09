@@ -32,7 +32,6 @@ import {
   CATEGORY_GROUPS,
   CATEGORY_LABELS,
   DEFAULT_CATEGORIES,
-  DEFAULT_KEYWORDS,
   DEFAULT_SUMMARIES_PER_RUN,
   isArxivCategory,
   topicsOf,
@@ -52,6 +51,8 @@ const STALE_JOB_MS = 10 * 60 * 1000;
 const SUMMARY_CONCURRENCY = 3;
 // Live write-ups have to finish inside one function's 300 seconds; batches don't.
 const MAX_LIVE_WRITES = 8;
+// Batches are quick to submit, but each paper's full text still has to be fetched politely first.
+const MAX_BATCH_WRITES = 15;
 
 // ---------------------------------------------------------------------------------------------
 // Settings
@@ -69,7 +70,8 @@ export async function getPreferences(reader: Reader): Promise<Preferences> {
     .values({
       userId: reader.id,
       categories: DEFAULT_CATEGORIES,
-      keywords: DEFAULT_KEYWORDS,
+      // None to start: presets would steer everyone the same way. Likes and saves build it up.
+      keywords: [],
       summariesPerRun: DEFAULT_SUMMARIES_PER_RUN,
     })
     .onConflictDoNothing()
@@ -161,7 +163,10 @@ export interface IngestReport {
   fetched: number;
   discovered: number;
   sourceErrors: string[];
+  /** New to the shared catalogue. */
   inserted: number;
+  /** New to this reader, whoever else has already fetched them. */
+  newToReader: number;
   summarised: string[];
   failed: { id: string; error: string }[];
   batchId?: string;
@@ -187,14 +192,15 @@ export async function ingest(
   const discovered = await resolveCandidates(candidates);
   const all = [...fetched, ...discovered];
   const inserted = await upsertPapers(all);
+  const newToReader = await countNewToReader(reader.id, all.map((p) => p.id));
   await scoreForReader(reader.id, prefs, all.map((p) => p.id));
   await rescoreWaiting(reader.id, prefs);
 
   const config = summaryConfigFor(prefs);
   const batching = !!opts.batch && config.provider === "anthropic";
   const wanted = opts.summarise ?? prefs.summariesPerRun;
-  const picks = await pickWaiting(reader.id, prefs, batching ? wanted : Math.min(wanted, MAX_LIVE_WRITES));
-  const base = { fetched: fetched.length, discovered: discovered.length, sourceErrors: errors, inserted };
+  const picks = await pickWaiting(reader.id, prefs, Math.min(wanted, batching ? MAX_BATCH_WRITES : MAX_LIVE_WRITES));
+  const base = { fetched: fetched.length, discovered: discovered.length, sourceErrors: errors, inserted, newToReader };
 
   if (opts.defer) return { ...base, summarised: [], failed: [], picked: picks.map((p) => p.id) };
   if (batching) {
@@ -285,6 +291,17 @@ async function scoreForReader(userId: string, prefs: Preferences, paperIds: stri
   }
 }
 
+async function countNewToReader(userId: string, paperIds: string[]): Promise<number> {
+  const ids = [...new Set(paperIds)];
+  if (ids.length === 0) return 0;
+  const db = await getDb();
+  const known = await db
+    .select({ id: userPapers.paperId })
+    .from(userPapers)
+    .where(and(eq(userPapers.userId, userId), inArray(userPapers.paperId, ids)));
+  return ids.length - known.length;
+}
+
 /** Interests and learned affinities change between runs, so rescore everything still waiting. */
 async function rescoreWaiting(userId: string, prefs: Preferences) {
   const db = await getDb();
@@ -315,7 +332,10 @@ async function clearStaleJobs() {
 async function discover(reader: Reader, prefs: Preferences): Promise<{ candidates: Candidate[]; errors: string[] }> {
   const db = await getDb();
   const jobs: Promise<Candidate[]>[] = [fetchBiorxiv(prefs.categories), fetchRecentBySubfields(prefs.categories)];
-  if (prefs.sources.inspireTrending) jobs.push(fetchTrending());
+  // Particle physics only, so it doesn't send a reader who doesn't follow it down that path.
+  if (prefs.sources.inspireTrending && prefs.categories.some((c) => topicsOf([c]).includes("particle"))) {
+    jobs.push(fetchTrending());
+  }
   if (prefs.sources.recommendations) {
     const signals = await db
       .select({ id: userPapers.paperId, hidden: userPapers.hidden })

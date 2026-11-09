@@ -36,9 +36,9 @@ export async function sendSignInEmail(to: string, url: string) {
   await deliver({
     to,
     subject: "Your reresearch sign-in link",
-    text: `Tap to sign in to reresearch:\n\n${url}\n\nThe link works once and expires in 15 minutes. If you didn't ask for it, ignore this email.`,
+    text: `Tap to sign in to reresearch:\n\n${url}\n\nThe link works once and expires in an hour. If you didn't ask for it, ignore this email.`,
     html: linkHtml(
-      "Tap the button to sign in. The link works once and expires in 15 minutes.",
+      "Tap the button to sign in. The link works once and expires in an hour.",
       "Sign in",
       url,
       "If you didn't ask for this, ignore it.",
@@ -51,12 +51,12 @@ export async function sendInviteEmail(to: string, url: string) {
   await deliver({
     to,
     subject: "You're invited to reresearch",
-    text: `You're invited to reresearch: new research papers, read as threads.\n\nTap to sign in:\n\n${url}\n\nThis link works once and expires in 15 minutes. Your invite doesn't expire: enter your email at ${login} any time for a new link.`,
+    text: `You're invited to reresearch: new research papers, read as threads.\n\nTap to sign in:\n\n${url}\n\nThis link works once and expires in an hour. Your invite doesn't expire: enter your email at ${login} any time for a new link.`,
     html: linkHtml(
       "You're invited to reresearch: new research papers, read as threads.",
       "Sign in",
       url,
-      `This link works once and expires in 15 minutes. Your invite doesn't expire: enter your email at <a href="${login}" style="color:#536471">the sign-in page</a> any time for a new link.`,
+      `This link works once and expires in an hour. Your invite doesn't expire: enter your email at <a href="${login}" style="color:#536471">the sign-in page</a> any time for a new link.`,
     ),
   });
 }

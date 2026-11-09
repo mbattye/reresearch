@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, ne, notExists, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, ne, notExists, or, sql } from "drizzle-orm";
 import { getDb, schema } from "./db";
 import type { Paper, Thread, ThreadJob, UserPaper } from "./db/schema";
 import { feedRank } from "./ranking";
@@ -165,6 +165,23 @@ export async function getJobCounts(userId: string) {
     .where(and(eq(threadJobs.userId, userId), ne(threadJobs.status, "failed")))
     .groupBy(threadJobs.status);
   return Object.fromEntries(rows.map((r) => [r.status, r.n])) as Partial<Record<ThreadJob["status"], number>>;
+}
+
+/** Write-ups that failed for this reader in the last day, so the feed can say so instead of staying quiet. */
+export async function getRecentFailures(userId: string) {
+  const db = await getDb();
+  const rows = await db
+    .select({ error: threadJobs.error })
+    .from(threadJobs)
+    .where(
+      and(
+        eq(threadJobs.userId, userId),
+        eq(threadJobs.status, "failed"),
+        gt(threadJobs.updatedAt, new Date(Date.now() - 86_400_000)),
+      ),
+    )
+    .orderBy(desc(threadJobs.updatedAt));
+  return { count: rows.length, latest: rows[0]?.error ?? null };
 }
 
 type Flag = "liked" | "saved" | "hidden";

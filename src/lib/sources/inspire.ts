@@ -6,7 +6,7 @@ const API = "https://inspirehep.net/api/literature";
 interface Hit {
   metadata: {
     titles: { title: string }[];
-    abstracts?: { value: string }[];
+    abstracts?: { value: string; source?: string }[];
     authors?: { full_name: string }[];
     arxiv_eprints?: { value: string }[];
     dois?: { value: string }[];
@@ -40,7 +40,8 @@ export async function fetchTrending(opts: { sinceDays?: number; minCitations?: n
       arxivId: m.arxiv_eprints?.[0]?.value,
       doi: m.dois?.[0]?.value ? normaliseDoi(m.dois[0].value) : undefined,
       title: m.titles[0]?.title ?? "Untitled",
-      abstract: m.abstracts?.[0]?.value,
+      // INSPIRE's terms only allow reusing abstracts that came from arXiv or CERN.
+      abstract: m.abstracts?.find((a) => a.source === "arXiv" || a.source === "CERN")?.value,
       authors: (m.authors ?? []).map((a) => a.full_name),
       publishedAt: date,
       venue: m.publication_info?.[0]?.journal_title,

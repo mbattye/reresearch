@@ -43,7 +43,7 @@ export async function markThreadRead(paperId: string) {
   await markRead(reader.id, paperId);
 }
 
-export type FetchState = Result;
+export type FetchState = (NonNullable<Result> & { writing?: boolean }) | null;
 
 /**
  * Fetch and rank now (a few seconds) so the reader gets a real answer, then write the picks
@@ -55,9 +55,9 @@ export async function fetchPapers(): Promise<FetchState> {
     const report = await ingest(reader, { defer: true });
     const picked = report.picked ?? [];
     const found =
-      report.inserted === 0
+      report.newToReader === 0
         ? "No new papers since the last fetch."
-        : `Found ${report.inserted} new paper${report.inserted === 1 ? "" : "s"}.`;
+        : `Found ${report.newToReader} new paper${report.newToReader === 1 ? "" : "s"}.`;
     if (picked.length && !(await canWrite(reader))) {
       refresh();
       return { ok: true, message: `${found} Add your API key in Settings to have the best ones written up.` };
@@ -72,7 +72,7 @@ export async function fetchPapers(): Promise<FetchState> {
     const writing = picked.length
       ? ` Writing up the best ${picked.length}; they'll appear in For you within a minute or two.`
       : " Nothing left to write up.";
-    return { ok: true, message: found + writing };
+    return { ok: true, message: found + writing, writing: picked.length > 0 };
   } catch (err) {
     return { ok: false, message: `Fetch failed: ${err instanceof Error ? err.message : String(err)}` };
   }
@@ -270,11 +270,14 @@ async function sendLink(email: string, invite = false) {
   await auth.api.signInMagicLink({ body: { email, callbackURL: "/", errorCallbackURL: "/login?link=expired", metadata: { invite } }, headers: await headers() });
 }
 
+type SignInResult = (NonNullable<Result> & { needsAccess?: boolean }) | null;
+
 /**
- * Sends a sign-in link to existing accounts (and creates an admin's account on first use).
- * The reply is the same whether or not the email has access, so it can't be used to probe.
+ * Sends a sign-in link to existing accounts (and creates an admin's account on first use). An email
+ * without access is offered the request form, which does show who has an account, deliberately:
+ * being stranded on "check your email" was the worse problem. Requests are still rate limited.
  */
-export async function requestSignInLink(_prev: Result, formData: FormData): Promise<Result> {
+export async function requestSignInLink(_prev: SignInResult, formData: FormData): Promise<SignInResult> {
   const email = String(formData.get("email") ?? "")
     .trim()
     .toLowerCase();
@@ -284,14 +287,17 @@ export async function requestSignInLink(_prev: Result, formData: FormData): Prom
     const allowed = (await allowAttempt(`sign-in:${ip}`, 10, HOUR)) && (await allowAttempt(`link:${email}`, 3, 15 * MINUTE));
     if (allowed) {
       if (isAdmin(email)) await ensureAccount(email);
-      if (await accountExists(email)) await sendLink(email);
+      if (!(await accountExists(email))) {
+        return { ok: false, needsAccess: true, message: "That email doesn't have access yet. You can request it here." };
+      }
+      await sendLink(email);
     }
   } catch (err) {
     console.error("[sign-in] couldn't send link", err);
   }
   return {
     ok: true,
-    message: "If that email has access, a sign-in link is on its way. It works once and expires in 15 minutes.",
+    message: "A sign-in link is on its way. It works once and expires in an hour. If it's not there, check your spam folder.",
   };
 }
 

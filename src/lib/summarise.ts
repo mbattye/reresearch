@@ -285,7 +285,9 @@ async function summariseViaOpenAI(
   });
   const body = (await res.json().catch(() => ({}))) as OpenAIResponse;
   if (res.status === 401) throw new Error("OpenAI rejected the API key. Update it in Settings.");
-  if (body.error?.code === "insufficient_quota") throw new Error("Your OpenAI account is out of credit.");
+  if (body.error?.code === "insufficient_quota" || /no credits|exceeded your current quota/i.test(body.error?.message ?? "")) {
+    throw new Error("Your OpenAI account is out of credit. Add some at platform.openai.com, then retry.");
+  }
   if (!res.ok || body.error) throw new Error(`OpenAI: ${body.error?.message ?? res.status}`);
 
   if (body.incomplete_details?.reason === "max_output_tokens") throw new Error("Summary was cut off at max_tokens");

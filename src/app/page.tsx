@@ -10,10 +10,10 @@ import { QueueList } from "@/components/QueueList";
 import { RandomPaper } from "@/components/RandomPaper";
 import { Welcome } from "@/components/Welcome";
 import { requireUser } from "@/lib/auth";
-import { getFeed, getJobCounts, getQueue, type FeedItem, type FeedTab, type QueueItem } from "@/lib/feed";
+import { getFeed, getJobCounts, getQueue, getRecentFailures, type FeedItem, type FeedTab, type QueueItem } from "@/lib/feed";
 import { canWrite, getPreferences, summaryConfigFor } from "@/lib/pipeline";
 import { countTopics, isTopic, topicsOf, TOPICS, OTHER_TOPIC, type TopicId } from "@/lib/topics";
-import { FetchButton } from "@/components/FetchButton";
+import { FetchButton, FetchNotice } from "@/components/FetchButton";
 
 export const maxDuration = 300;
 
@@ -36,8 +36,9 @@ async function HomeContent({ searchParams }: Pick<PageProps<"/">, "searchParams"
   const reader = await requireUser();
   const prefs = await getPreferences(reader);
   const { readingLevel } = prefs;
-  const [counts, hasKey] = await Promise.all([
+  const [counts, failures, hasKey] = await Promise.all([
     getJobCounts(reader.id),
+    getRecentFailures(reader.id),
     canWrite(reader, summaryConfigFor(prefs).provider),
   ]);
   const writing = counts.writing ?? 0;
@@ -59,6 +60,15 @@ async function HomeContent({ searchParams }: Pick<PageProps<"/">, "searchParams"
       {summarising && tab !== "queue" && (
         <Link href="/?tab=queue" className="block border-b border-line bg-accent-soft px-4 py-2 text-[13px] text-accent">
           Writing {writing} thread{writing === 1 ? "" : "s"}…
+        </Link>
+      )}
+      <FetchNotice />
+      {failures.count > 0 && tab !== "queue" && (
+        <Link href="/?tab=queue" className="block border-b border-line bg-raised px-4 py-2.5 text-[13px] leading-snug">
+          <span className="font-semibold text-like">
+            {failures.count} write-up{failures.count === 1 ? "" : "s"} failed.
+          </span>{" "}
+          {failures.latest} <span className="font-medium text-accent">Open Queue to retry</span>
         </Link>
       )}
       {(tab === "foryou" || tab === "latest") && <RandomPaper hasKey={hasKey} />}

@@ -11,6 +11,16 @@ import { getDb, schema } from "./db";
 import { sendInviteEmail, sendSignInEmail } from "./email";
 
 const SESSION_DAYS = 90;
+const LINK_MINUTES = 60;
+
+/**
+ * Email scanners open links to check them, which would use up a one-time token before the reader
+ * gets there. So emails link to a page with a button, and only the button spends the token.
+ */
+function confirmationLink(url: string): string {
+  const token = new URL(url).searchParams.get("token") ?? "";
+  return `${baseURL()}/login/confirm?token=${encodeURIComponent(token)}`;
+}
 
 async function createAuth() {
   const secret = process.env.BETTER_AUTH_SECRET;
@@ -30,10 +40,11 @@ async function createAuth() {
       magicLink({
         // Invite only: links go to existing accounts. Invites (and an admin's first sign-in) create the account.
         disableSignUp: true,
-        expiresIn: 15 * 60,
+        expiresIn: LINK_MINUTES * 60,
         sendMagicLink: async ({ email, url, metadata }) => {
           if (!(await accountExists(email))) return;
-          await (metadata?.invite ? sendInviteEmail(email, url) : sendSignInEmail(email, url));
+          const link = confirmationLink(url);
+          await (metadata?.invite ? sendInviteEmail(email, link) : sendSignInEmail(email, link));
         },
       }),
       // Lets server actions set and clear the session cookie (must be last).

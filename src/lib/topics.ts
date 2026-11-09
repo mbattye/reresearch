@@ -116,25 +116,6 @@ export const DEFAULT_CATEGORIES = [
   "physics.plasm-ph",
 ];
 
-export const DEFAULT_KEYWORDS: Keyword[] = [
-  // Bare "fusion" also matches fusion-based quantum computing and sensor fusion.
-  { term: "fusion energy", weight: 2 },
-  { term: "fusion plasma", weight: 2 },
-  { term: "fusion reactor", weight: 2 },
-  { term: "nuclear fusion", weight: 2 },
-  { term: "tokamak", weight: 2 },
-  { term: "stellarator", weight: 2 },
-  { term: "inertial confinement", weight: 2 },
-  { term: "higgs", weight: 1.5 },
-  { term: "neutrino", weight: 1.5 },
-  { term: "dark matter", weight: 1.5 },
-  { term: "LHC", weight: 1 },
-  { term: "beyond the standard model", weight: 1 },
-  { term: "quantum error correction", weight: 1.5 },
-  { term: "entanglement", weight: 1 },
-  { term: "quantum computing", weight: 1 },
-];
-
 /** Offered in settings: AI categories post so much that ranking needs keywords to find anything. */
 export const AI_KEYWORDS: Keyword[] = [
   // Bare "alignment" also matches detector alignment, and bare "agent" most of chemistry.

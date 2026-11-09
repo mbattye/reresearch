@@ -191,7 +191,7 @@ async function Settings() {
               <span>
                 Trending in particle physics
                 <span className="block text-[12.5px] text-muted">
-                  The most-cited papers of the last six weeks on INSPIRE-HEP: what the field is arguing about.
+                  The most-cited papers of the last six weeks on INSPIRE-HEP. Only used if you follow a particle physics topic.
                 </span>
               </span>
             </label>
@@ -216,7 +216,8 @@ async function Settings() {
         <section data-tour="interests" className="px-4 py-4">
           <h2 className={sectionTitle}>Interests</h2>
           <p className={hint}>
-            One per line. Optional weight after a colon (default 1; negative to steer away). Title matches count double.
+            Optional: leave this empty and it learns from what you like and save. One per line, with an optional weight
+            after a colon (default 1; negative to steer away). Title matches count double.
           </p>
           <InterestsBox initial={prefs.keywords.map(keywordLine).join("\n")} />
           <label className="mt-3 flex items-center justify-between text-[14px]">
