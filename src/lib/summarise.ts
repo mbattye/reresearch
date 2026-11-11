@@ -350,7 +350,7 @@ async function summariseViaOpenRouter(
   });
   const body = (await res.json().catch(() => ({}))) as OpenRouterResponse;
   if (res.status === 401) throw new Error("OpenRouter rejected the API key. Update it in Settings.");
-  if (res.status === 402) throw new Error("Your OpenRouter account is out of credits.");
+  if (res.status === 402) throw new Error("Your OpenRouter account is out of credit. Add some at openrouter.ai/settings/credits, then retry.");
   if (!res.ok || body.error) throw new Error(`OpenRouter: ${body.error?.message ?? res.status}`);
 
   const choice = body.choices?.[0];

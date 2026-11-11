@@ -61,7 +61,7 @@ Every thread page has an "Original paper" block: the full author list (or the co
 
 - **Sign-in** is by emailed link (Better Auth's magic-link plugin, emails via Resend). There are no passwords.
 - **Invite only, with a waitlist.** Admins (`ADMIN_EMAILS`) invite people from Settings, which creates their account and emails a link. Anyone else can request access from the login page: requests appear in Settings to approve or decline, and admins are emailed about new ones straight away (at most one email every 10 minutes; the daily run sends any left over). Nothing is sent to the person until they're approved. Sign-up is otherwise switched off, sign-in and requests are rate limited, and an email without access is offered the request form instead of a link. Emailed links open a page with a button, so a mail scanner can't use one up.
-- **Readers bring their own key** for Anthropic, OpenAI or OpenRouter (Claude, GPT, Gemini, Grok and others). New readers get a welcome on the feed that walks them through adding one. Keys are checked with a free request, encrypted with AES-256-GCM bound to the reader's id, decrypted only to make a call, and never sent back to the browser (Settings shows `…a1b2`). Admins can fall back to the deployment's `ANTHROPIC_API_KEY`.
+- **Readers bring their own key** for Anthropic, OpenAI or OpenRouter (Claude, GPT, Gemini, Grok and others). New readers get a welcome on the feed that walks them through adding one. The easiest is **Connect OpenRouter**: OpenRouter's OAuth PKCE flow (`src/lib/openrouter-connect.ts`, `/api/openrouter/*`) creates a key for reresearch on the reader's account, so nothing is copied or pasted. Keys are checked with a free request, encrypted with AES-256-GCM bound to the reader's id, decrypted only to make a call, and never sent back to the browser (Settings shows `…a1b2`). Admins can fall back to the deployment's `ANTHROPIC_API_KEY`.
 - **What's shared and what isn't.** Papers and threads are shared: a thread is written once per paper and reading level, by whoever's key gets there first, and is free for everyone else at that level. Interests, likes, saves, learned ranking, the queue, budget and spend are per reader.
 - **Your data**: a public privacy notice at `/privacy`, and readers can delete their own account from Settings.
 - **Before accounts**, everything belonged to one reader; the first admin to sign in inherits it.
@@ -103,7 +103,7 @@ Settings shows spend this month, and each thread shows what it cost. The model a
 ## Roadmap
 
 - Zotero connector (Web API: user id + API key) so your existing library feeds the queue, plus BibTeX/RIS upload
-- "Connect OpenRouter" sign-in (OAuth) instead of pasting a key
+- "Continue with ChatGPT" so ChatGPT Plus and Pro readers can use their plan (OpenAI's waitlist for hosted apps). Claude and Gemini don't allow other apps to use their subscriptions.
 - OSTI.gov (fusion reports), medRxiv and Europe PMC
 - Semantic ranking with embeddings, beyond keyword matching
 - Figures from the paper inline in threads

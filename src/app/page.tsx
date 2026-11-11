@@ -149,7 +149,7 @@ function EmptyState({ tab, hasKey }: { tab: FeedTab; hasKey: boolean }) {
         <p className="text-[17px] font-semibold">Add an API key to get started</p>
         <p className="mt-1 text-[14px] text-muted">
           Threads are written with your own Anthropic, OpenAI or OpenRouter key, so your feed stays empty until you add
-          one.
+          one. Connecting OpenRouter takes a couple of taps.
         </p>
         <Link
           href="/settings"

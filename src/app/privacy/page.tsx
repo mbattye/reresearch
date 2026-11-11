@@ -29,8 +29,10 @@ export default function PrivacyPage() {
           waitlist. There are no passwords.
         </li>
         <li>
-          <strong>Your AI key</strong>, if you add one. It&apos;s encrypted, used only to write your threads, and never shown
-          again. Only its last four characters are kept readable, so you can tell which key is saved.
+          <strong>Your AI key</strong>, if you add one, or the key OpenRouter creates when you connect it. It&apos;s
+          encrypted, used only to write your threads, and never shown again. Only its last four characters are kept
+          readable, so you can tell which key is saved. Connecting OpenRouter happens on OpenRouter&apos;s site: reresearch
+          never sees your OpenRouter password.
         </li>
         <li>
           <strong>What you do in the app</strong>: your topics, interests and settings, what you like, save, hide and

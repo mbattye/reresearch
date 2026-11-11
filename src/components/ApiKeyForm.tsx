@@ -8,11 +8,16 @@ interface Props {
   provider: ProviderInfo;
   /** Last four characters of the stored key, if there is one. */
   hint: string | null;
+  /** Where "Connect OpenRouter" should bring the reader back to. */
+  from?: "welcome" | "settings";
+  /** Shown instead of the usual note, e.g. how a connection went. */
+  notice?: { ok: boolean; message: string } | null;
 }
 
 /** Add, replace or remove one provider's key. The key itself never comes back to the browser. */
-export function ApiKeyForm({ provider, hint }: Props) {
-  const [state, action, pending] = useActionState(saveApiKey, null);
+export function ApiKeyForm({ provider, hint, from = "settings", notice = null }: Props) {
+  const [saved, action, pending] = useActionState(saveApiKey, null);
+  const state = saved ?? notice;
   const [removing, startRemoving] = useTransition();
   return (
     <div className="rounded-xl border border-line p-3">
@@ -34,6 +39,22 @@ export function ApiKeyForm({ provider, hint }: Props) {
           <span className="text-[12.5px] text-muted">Not set</span>
         )}
       </div>
+      {provider.id === "openrouter" && (
+        <>
+          {/* A full page load, not a client navigation: the route redirects to openrouter.ai. */}
+          <a
+            href={`/api/openrouter/start?from=${from}`}
+            className="mt-2 flex items-center justify-center rounded-full bg-fg px-4 py-2 text-[14px] font-semibold text-bg transition hover:opacity-90 active:scale-95"
+          >
+            {hint ? "Reconnect OpenRouter" : "Connect OpenRouter"}
+          </a>
+          <p className="mt-1.5 text-[12.5px] text-muted">
+            Sign in or sign up there (Google works), and reresearch gets its own key. Add a few dollars of credit at
+            OpenRouter to pay for threads. No copying or pasting.
+          </p>
+          <p className="mt-2 text-[12.5px] text-muted">Or paste a key you already have:</p>
+        </>
+      )}
       <form action={action} className="mt-2 flex gap-2">
         <input type="hidden" name="provider" value={provider.id} />
         <input
@@ -54,7 +75,7 @@ export function ApiKeyForm({ provider, hint }: Props) {
       </form>
       {state ? (
         <p className={`mt-1.5 text-[12.5px] ${state.ok ? "text-accent" : "text-like"}`}>{state.message}</p>
-      ) : (
+      ) : provider.id === "openrouter" ? null : (
         <p className="mt-1.5 text-[12.5px] text-muted">
           Get one at{" "}
           <a href={provider.keyUrl} target="_blank" rel="noreferrer" className="text-accent underline">

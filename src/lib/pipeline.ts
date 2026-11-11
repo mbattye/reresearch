@@ -144,6 +144,16 @@ export async function canWrite(reader: Reader, provider?: Provider): Promise<boo
   return hasKeyFor(reader.id, reader.email, chosen);
 }
 
+/** A first key should just work, whichever provider it's for: switch to it if the current choice has no key. */
+export async function preferProviderIfStuck(reader: Reader, provider: Provider): Promise<void> {
+  if (await canWrite(reader)) return;
+  const db = await getDb();
+  await db
+    .update(schema.userSettings)
+    .set({ summaryProvider: provider, summaryModel: null, updatedAt: new Date() })
+    .where(eq(schema.userSettings.userId, reader.id));
+}
+
 async function requireKey(reader: Reader, provider: Provider): Promise<string> {
   const key = await getKeyForWriting(reader.id, reader.email, provider);
   if (!key) throw new Error(`Add your ${providerLabel(provider)} API key in Settings to write threads.`);

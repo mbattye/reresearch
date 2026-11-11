@@ -14,6 +14,7 @@ import { markRead, setFlag } from "@/lib/feed";
 import { deleteKey, saveKey } from "@/lib/keys";
 import {
   canWrite,
+  preferProviderIfStuck,
   claimRewrite,
   collectBatches,
   getPreferences,
@@ -228,14 +229,7 @@ export async function saveApiKey(_prev: Result, formData: FormData): Promise<Res
   if (!provider) return { ok: false, message: "Unknown provider" };
   try {
     await saveKey(reader.id, provider, String(formData.get("key") ?? ""));
-    // A first key should just work, whichever provider it's for.
-    if (!(await canWrite(reader))) {
-      const db = await getDb();
-      await db
-        .update(schema.userSettings)
-        .set({ summaryProvider: provider, summaryModel: null, updatedAt: new Date() })
-        .where(eq(schema.userSettings.userId, reader.id));
-    }
+    await preferProviderIfStuck(reader, provider);
     refresh();
     return { ok: true, message: "Key checked and saved." };
   } catch (err) {

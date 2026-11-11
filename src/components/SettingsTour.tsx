@@ -6,7 +6,7 @@ const STEPS = [
   {
     spot: "keys",
     title: "1. Add one AI key",
-    body: "This is the only thing you have to add. Paste a key from Anthropic, OpenAI or OpenRouter; the links show where to get one. You pay them directly. Papers come from free sources, so they need no key.",
+    body: "This is the only thing you have to add. Connect OpenRouter in a couple of taps, or paste a key from Anthropic, OpenAI or OpenRouter. You pay them directly. Papers come from free sources, so they need no key.",
   },
   {
     spot: "level",

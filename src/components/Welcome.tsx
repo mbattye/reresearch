@@ -48,8 +48,15 @@ function AddKey({ close }: { close: () => void }) {
         You pay your provider directly: about 6¢ a thread on the default model, under 1¢ on the cheapest. Your key is
         encrypted and never shown again.
       </p>
+      <a href="/api/openrouter/start?from=welcome" className={`${primary} mt-4 w-full`}>
+        Connect OpenRouter
+      </a>
+      <p className="mt-1.5 text-[12.5px] leading-snug text-muted">
+        The easiest start: sign in or sign up at OpenRouter (Google works) and add a few dollars of credit. One account
+        covers Claude, GPT, Gemini and Grok, and nothing needs copying.
+      </p>
       <fieldset className="mt-4">
-        <legend className="text-[13px] font-medium text-muted">Where&apos;s your key from?</legend>
+        <legend className="text-[13px] font-medium text-muted">Or paste a key you already have</legend>
         <div className="mt-1 grid grid-cols-3 gap-2">
           {PROVIDERS.map((p) => (
             <label
@@ -69,7 +76,7 @@ function AddKey({ close }: { close: () => void }) {
         </div>
       </fieldset>
       <div className="mt-3">
-        <ApiKeyForm key={provider} provider={chosen} hint={null} />
+        <ApiKeyForm key={provider} provider={chosen} hint={null} from="welcome" />
       </div>
       <button type="button" onClick={close} className={`${secondary} mt-3 w-full`}>
         Skip for now

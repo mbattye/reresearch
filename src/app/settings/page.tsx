@@ -38,7 +38,7 @@ import { timeAgo } from "@/lib/format";
 
 export const maxDuration = 300;
 
-export default function SettingsPage() {
+export default function SettingsPage({ searchParams }: PageProps<"/settings">) {
   return (
     <>
       <header className="sticky top-0 z-20 flex h-[calc(3rem+env(safe-area-inset-top))] items-center gap-6 border-b border-line bg-bg/85 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-md">
@@ -49,7 +49,7 @@ export default function SettingsPage() {
         </div>
       </header>
       <Suspense fallback={null}>
-        <Settings />
+        <Settings searchParams={searchParams} />
       </Suspense>
     </>
   );
@@ -64,9 +64,20 @@ const EFFORT_OPTIONS = [
 const sectionTitle = "text-[15px] font-semibold";
 const hint = "mt-0.5 text-[13px] text-muted";
 
-async function Settings() {
+const OPENROUTER_NOTICES: Record<string, { ok: boolean; message: string }> = {
+  connected: {
+    ok: true,
+    message: "OpenRouter connected. If your account is new, add credit at openrouter.ai/settings/credits; you can set a spending limit on the key at openrouter.ai/keys.",
+  },
+  cancelled: { ok: false, message: "OpenRouter wasn't connected. Try again when you're ready." },
+  failed: { ok: false, message: "Connecting OpenRouter didn't work. Try again, or paste a key instead." },
+};
+
+async function Settings({ searchParams }: { searchParams: PageProps<"/settings">["searchParams"] }) {
   await connection();
   const reader = await requireUser();
+  const { openrouter } = await searchParams;
+  const openrouterNotice = typeof openrouter === "string" ? (OPENROUTER_NOTICES[openrouter] ?? null) : null;
   const [prefs, affinities, spend, keys, openrouterModels] = await Promise.all([
     getPreferences(reader),
     getTopAffinities(reader.id),
@@ -99,7 +110,7 @@ async function Settings() {
         </form>
       </section>
 
-      <section data-tour="keys" className="px-4 py-4">
+      <section id="keys" data-tour="keys" className="scroll-mt-14 px-4 py-4">
         <h2 className={sectionTitle}>Your API keys</h2>
         <p className={hint}>
           Threads are written with your own key, so you pay your provider directly. Keys are encrypted, never shown
@@ -111,8 +122,14 @@ async function Settings() {
           </p>
         )}
         <div className="mt-3 grid gap-2">
-          {PROVIDERS.map((p) => (
-            <ApiKeyForm key={p.id} provider={p} hint={keyHint(p.id)} />
+          {/* OpenRouter first: connecting it needs no key-copying, so it's the easy start. */}
+          {[...PROVIDERS].sort((a, b) => Number(b.id === "openrouter") - Number(a.id === "openrouter")).map((p) => (
+            <ApiKeyForm
+              key={p.id}
+              provider={p}
+              hint={keyHint(p.id)}
+              notice={p.id === "openrouter" ? openrouterNotice : null}
+            />
           ))}
         </div>
       </section>
