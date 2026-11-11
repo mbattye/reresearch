@@ -10,6 +10,7 @@ const MAX_PENDING = 1000;
 const MAX_LISTED = 100;
 const MAX_IN_DIGEST = 50;
 const ATTEMPT_RETENTION_MS = 24 * 60 * 60 * 1000;
+const NOTICE_GAP_MS = 10 * 60 * 1000;
 
 /** Vercel sets x-real-ip itself; a client can't choose it. */
 export function clientIp(headers: Headers): string {
@@ -29,12 +30,22 @@ export async function allowAttempt(key: string, limit: number, windowMs: number)
   return true;
 }
 
-/** Adds someone to the waitlist. Asking again, or after being declined, changes nothing. */
-export async function recordRequest(email: string): Promise<void> {
+/** Adds someone to the waitlist and says whether they're new to it. Asking again, or after being declined, changes nothing. */
+export async function recordRequest(email: string): Promise<boolean> {
   const db = await getDb();
   const [{ n }] = await db.select({ n: count() }).from(accessRequests).where(eq(accessRequests.status, "pending"));
-  if (n >= MAX_PENDING) return;
-  await db.insert(accessRequests).values({ email }).onConflictDoNothing();
+  if (n >= MAX_PENDING) return false;
+  const added = await db.insert(accessRequests).values({ email }).onConflictDoNothing().returning({ email: accessRequests.email });
+  return added.length > 0;
+}
+
+/**
+ * Emails the admins about a new request straight away, but at most once per NOTICE_GAP_MS so the
+ * public form can't flood their inbox. Requests that arrive inside the gap go in the next email.
+ */
+export async function noticeNewRequests(): Promise<void> {
+  if (!(await allowAttempt("admin-notice", 1, NOTICE_GAP_MS))) return;
+  await sendRequestDigest();
 }
 
 /** Oldest first, so people are seen in the order they asked. */
@@ -65,7 +76,7 @@ export async function declineRequest(email: string): Promise<void> {
   await db.update(accessRequests).set({ status: "declined" }).where(eq(accessRequests.email, email));
 }
 
-/** One email to the admins listing requests they haven't heard about. Returns how many it covered. */
+/** One email to the admins listing requests they haven't heard about. Returns how many it covered. The daily run also calls it, to catch any left over. */
 export async function sendRequestDigest(): Promise<number> {
   const admins = adminEmails();
   if (!admins.length) return 0;

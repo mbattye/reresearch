@@ -5,7 +5,7 @@ import { refresh } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
-import { allowAttempt, clearRequest, clientIp, declineRequest, forgetEmail, recordRequest } from "@/lib/access";
+import { allowAttempt, clearRequest, clientIp, declineRequest, forgetEmail, noticeNewRequests, recordRequest } from "@/lib/access";
 import { accountExists, ensureAccount, getAuth, requireUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth-config";
 import { getDb, schema } from "@/lib/db";
@@ -309,7 +309,9 @@ export async function requestAccess(_prev: Result, formData: FormData): Promise<
   if (!EMAIL.test(email) || email.length > 200) return { ok: false, message: "Enter a valid email address." };
   try {
     if (await allowAttempt(`access:${clientIp(await headers())}`, 5, HOUR)) {
-      if (!(await accountExists(email))) await recordRequest(email);
+      if (!(await accountExists(email)) && (await recordRequest(email))) {
+        after(() => noticeNewRequests().catch((err) => console.error("[access] couldn't email admins", err)));
+      }
     }
   } catch (err) {
     console.error("[access] couldn't record request", err);
